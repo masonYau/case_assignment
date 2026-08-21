@@ -5,7 +5,7 @@
   "as_of_date": "2026-08-13",
   "market": "Hong Kong",
   "legal_entity": "HBAP",
-  "output_file": "experiment/assignment_experiment_result.xlsx",
+  "output_file": "assignment_experiment_result.xlsx",
   "debug": true,
   "lookback_years": [2, 5],
   "default_workload": 1.0,
@@ -24,33 +24,33 @@
   },
   "files": {
     "business_output": {
-      "path": "path/to/business/CM Assignment output.xlsx",
+      "path": "CM Assignment output.xlsx",
       "sheet_name": "CMAssignmentFullList",
       "header": 0,
       "orientation": "auto"
     },
     "cm_list": {
-      "path": "path/to/your/CM_LIST.xlsx",
+      "path": "CM_LIST.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     },
     "closed_report": [
-      "path/to/closed_report.csv"
+      "closed_report.csv"
     ],
     "open_report": [
       {
-        "path": "path/to/OpenReviews_CMB_20260720.csv",
+        "path": "OpenReviews_CMB_20260720.csv",
         "header": null,
         "orientation": "fields_as_rows"
       }
     ],
     "horis_mg": {
-      "path": "path/to/horis_mg.xlsx",
+      "path": "horis_mg.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     },
     "bb_rm_imis_group": {
-      "path": "path/to/BBRM_IMIS_GROUP.xlsx",
+      "path": "BBRM_IMIS_GROUP.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     }

@@ -87,6 +87,13 @@ def read_json(json_file: str) -> dict:
         return json.load(f)
 
 
+def resolve_working_path(path_value: str) -> Path:
+    path = Path(path_value).expanduser()
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
+
+
 def get_nested(cfg: dict, path: Sequence[str], default=None):
     cur = cfg
     for key in path:
@@ -175,7 +182,8 @@ def read_table(file_config, default_sheet=None) -> pd.DataFrame:
         sheet_name = file_config.get("sheet_name", default_sheet)
         header = file_config.get("header", 0)
 
-    suffix = Path(path).suffix.lower()
+    path = resolve_working_path(path)
+    suffix = path.suffix.lower()
     if suffix in {".xlsx", ".xls", ".xlsm"}:
         return pd.read_excel(path, sheet_name=sheet_name or 0, header=header)
     if suffix == ".csv":
@@ -814,10 +822,8 @@ class AssignmentExperiment:
             wip_by_team_df: pd.DataFrame,
             mapping_check_df: pd.DataFrame,
     ):
-        output_file = self.config.get("output_file", "experiment/assignment_experiment_result.xlsx")
-        output_path = Path(output_file)
-        if not output_path.is_absolute():
-            output_path = ROOT_DIR / output_path
+        output_file = self.config.get("output_file", "assignment_experiment_result.xlsx")
+        output_path = resolve_working_path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with pd.ExcelWriter(output_path) as writer:

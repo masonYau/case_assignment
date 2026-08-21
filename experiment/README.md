@@ -13,13 +13,15 @@
 
 ## Run
 
-复制 `experiment_config.example.json`，填入公司环境文件路径和字段名。
+复制 `experiment_config.example.json`，把输入文件放到运行命令时的当前工作目录，并按需调整文件名和字段名。
 
 ```powershell
 python experiment/run_experiment.py --config experiment/experiment_config.local.json
 ```
 
 如果本机 `python` 不在 PATH，可以用公司环境里的 Python 解释器直接运行同一个脚本。
+
+配置里的相对输入路径和 `output_file` 都会以运行命令时的当前工作目录为基准；绝对路径仍会原样使用。
 
 ## Important Config
 
@@ -33,7 +35,7 @@ python experiment/run_experiment.py --config experiment/experiment_config.local.
 
 ```json
 "business_output": {
-  "path": "...xlsx",
+  "path": "CM Assignment output.xlsx",
   "sheet_name": "CMAssignmentFullList",
   "header": null,
   "orientation": "fields_as_rows"
@@ -45,7 +47,7 @@ open report 的截图样例也是字段在第一列、case 横向展开的格式
 ```json
 "open_report": [
   {
-    "path": ".../OpenReviews_CMB_20260720.csv",
+    "path": "OpenReviews_CMB_20260720.csv",
     "header": null,
     "orientation": "fields_as_rows"
   }
@@ -73,7 +75,7 @@ open report 的截图样例也是字段在第一列、case 横向展开的格式
 
 ## Output Sheets
 
-输出文件默认是 `experiment/assignment_experiment_result.xlsx`。
+输出文件默认是当前工作目录下的 `assignment_experiment_result.xlsx`。
 
 | Sheet | 内容 |
 |---|---|
