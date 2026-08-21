@@ -1,0 +1,35 @@
+# Local configuration and credentials
+config_*.json
+qlik_config.json
+.env
+.env.*
+
+# Runtime outputs
+history_data/
+*.csv
+*.xlsx
+*.xls
+*.log
+running_results.log
+warning.log
+email_error.txt
+export.csv
+temp.csv
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Jupyter local checkpoints
+.ipynb_checkpoints/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
