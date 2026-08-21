@@ -38,7 +38,11 @@
       "path/to/closed_report.csv"
     ],
     "open_report": [
-      "path/to/open_report.csv"
+      {
+        "path": "path/to/OpenReviews_CMB_20260720.csv",
+        "header": null,
+        "orientation": "fields_as_rows"
+      }
     ],
     "horis_mg": {
       "path": "path/to/horis_mg.xlsx",
@@ -106,12 +110,13 @@
       "stage": "Stage",
       "assigned_to_user": "Assigned to User",
       "user_id": "User ID",
-      "latest_dc_by": "Latest DC Finalised by ID",
+      "latest_dc_by": "DC Finalized by ID",
       "cm_id": "Staff ID",
       "date_candidates": [
         "Initiated Date",
-        "Latest DC Finalised Date",
-        "Date of latest action"
+        "DC Finalized Date",
+        "Date of latest action",
+        "Stage Start Date"
       ],
       "rm_num": "RM Num",
       "segment": "Segment"

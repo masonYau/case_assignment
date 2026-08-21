@@ -40,6 +40,37 @@ python experiment/run_experiment.py --config experiment/experiment_config.local.
 }
 ```
 
+open report 的截图样例也是字段在第一列、case 横向展开的格式，建议这样配：
+
+```json
+"open_report": [
+  {
+    "path": ".../OpenReviews_CMB_20260720.csv",
+    "header": null,
+    "orientation": "fields_as_rows"
+  }
+]
+```
+
+对应字段名默认按截图使用：
+
+```json
+"open_report": {
+  "customer": "Customer Number",
+  "stage": "Stage",
+  "assigned_to_user": "Assigned to User",
+  "user_id": "User ID",
+  "latest_dc_by": "DC Finalized by ID",
+  "date_candidates": [
+    "Initiated Date",
+    "DC Finalized Date",
+    "Date of latest action",
+    "Stage Start Date"
+  ],
+  "segment": "Segment"
+}
+```
+
 ## Output Sheets
 
 输出文件默认是 `experiment/assignment_experiment_result.xlsx`。

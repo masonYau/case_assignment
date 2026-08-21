@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -75,9 +75,9 @@ class DefaultFields:
         stage = "Stage"
         assigned_to_user = "Assigned to User"
         user_id = "User ID"
-        latest_dc_by = "Latest DC Finalised by ID"
+        latest_dc_by = "DC Finalized by ID"
         cm_id = "Staff ID"
-        date_candidates = ["Initiated Date", "Latest DC Finalised Date", "Date of latest action"]
+        date_candidates = ["Initiated Date", "DC Finalized Date", "Date of latest action", "Stage Start Date"]
         rm_num = "RM Num"
         segment = "Segment"
 
@@ -150,6 +150,21 @@ def get_col(fields: dict, key: str, default: str) -> str:
     return fields.get(key, default)
 
 
+def normalize_fields_as_rows(df: pd.DataFrame) -> pd.DataFrame:
+    field_col = df.columns[0]
+    out = df.set_index(field_col).T
+    out.columns = [str(c).strip() for c in out.columns]
+    out = out.reset_index(drop=True)
+    return out
+
+
+def looks_like_fields_as_rows(df: pd.DataFrame, field_names: Sequence[str]) -> bool:
+    if df.empty or df.shape[1] <= 1:
+        return False
+    first_col_values = set(df.iloc[:, 0].dropna().astype(str).str.strip())
+    return any(field_name in first_col_values for field_name in field_names)
+
+
 def read_table(file_config, default_sheet=None) -> pd.DataFrame:
     if isinstance(file_config, str):
         path = file_config
@@ -170,9 +185,17 @@ def read_table(file_config, default_sheet=None) -> pd.DataFrame:
     raise ValueError(f"Unsupported file type: {path}")
 
 
-def read_many(file_config) -> pd.DataFrame:
+def read_many(file_config, fields_as_rows_markers: Optional[Sequence[str]] = None) -> pd.DataFrame:
     files = as_list(file_config)
-    frames = [read_table(f) for f in files]
+    frames = []
+    for f in files:
+        df = read_table(f)
+        orientation = f.get("orientation", "records") if isinstance(f, dict) else "records"
+        if orientation == "fields_as_rows" or (
+                orientation == "auto" and fields_as_rows_markers and looks_like_fields_as_rows(df, fields_as_rows_markers)
+        ):
+            df = normalize_fields_as_rows(df)
+        frames.append(df)
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
@@ -223,7 +246,10 @@ class AssignmentExperiment:
         self.raw_case_df = read_table(files["business_output"], default_sheet="CMAssignmentFullList")
         self.raw_cm_df = read_table(files["cm_list"])
         self.raw_closed_df = read_many(files["closed_report"])
-        self.raw_open_df = read_many(files["open_report"])
+        self.raw_open_df = read_many(
+            files["open_report"],
+            fields_as_rows_markers=["Customer Number", "Review ID", "Stage", "Assigned to User"],
+        )
         self.raw_horis_mg_df = read_table(files["horis_mg"])
         self.raw_imis_df = read_table(files["bb_rm_imis_group"])
 
@@ -237,7 +263,7 @@ class AssignmentExperiment:
                 orientation == "auto" and case_id_col not in df.columns and df.shape[1] > 1
                 and case_id_col in df.iloc[:, 0].astype(str).to_list()
         ):
-            df = self.transpose_case_list(df)
+            df = normalize_fields_as_rows(df)
 
         customer_col = get_col(fields, "customer", DefaultFields.CaseList.customer)
         cin_col = get_col(fields, "cin", DefaultFields.CaseList.cin)
@@ -293,13 +319,6 @@ class AssignmentExperiment:
             )
 
         self.case_df = case_df
-
-    def transpose_case_list(self, df: pd.DataFrame) -> pd.DataFrame:
-        field_col = df.columns[0]
-        out = df.set_index(field_col).T
-        out.columns = [str(c).strip() for c in out.columns]
-        out = out.reset_index(drop=True)
-        return out
 
     def prepare_cm_list(self):
         fields = get_nested(self.config, ["fields", "cm_list"], {})
