@@ -80,6 +80,7 @@ open report 的截图样例也是字段在第一列、case 横向展开的格式
 | Sheet | 内容 |
 |---|---|
 | `summary` | business/proposed 在 2y/5y 的 customer/group 命中率，以及总体 WIP 统计 |
+| `metric_definitions` | summary/case_detail 中核心统计字段的定义、分子分母和计算方式 |
 | `case_detail` | 每个 case 的 business/proposed CM、MG/IMIS mapping、2y/5y 命中标记 |
 | `wip_by_cm` | CM 粒度 WIP |
 | `wip_by_team_cm` | Team + CM 粒度 WIP |
@@ -92,6 +93,9 @@ open report 的截图样例也是字段在第一列、case 横向展开的格式
 
 - `debug_history_sample`
 - `debug_case_normalized`
+
+`case_detail` 中的 `<method>_customer_hit_<window>y_last_review_id` 和
+`<method>_mg_hit_<window>y_last_review_id` 会显示支撑 CUSTOMER/MG 命中的最近一条历史 review id。
 
 ## Metric Notes
 

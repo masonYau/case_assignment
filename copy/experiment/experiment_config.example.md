@@ -91,6 +91,7 @@
       "imis_name": "Group Name"
     },
     "closed_report": {
+      "review_id": "Review ID",
       "customer": "Customer Number",
       "cm_id": "Latest DC Finalised by ID",
       "first_claimed_id": "First Claimed ID",
@@ -106,6 +107,7 @@
       "segment": "Segment"
     },
     "open_report": {
+      "review_id": "Review ID",
       "customer": "Customer Number",
       "stage": "Stage",
       "assigned_to_user": "Assigned to User",

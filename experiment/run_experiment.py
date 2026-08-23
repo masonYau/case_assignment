@@ -57,6 +57,7 @@ class DefaultFields:
         imis_name = "Group Name"
 
     class Closed:
+        review_id = "Review ID"
         customer = "Customer Number"
         cm_id = "Latest DC Finalised by ID"
         first_claimed_id = "First Claimed ID"
@@ -68,6 +69,7 @@ class DefaultFields:
         segment = "Segment"
 
     class Open:
+        review_id = "Review ID"
         customer = "Customer Number"
         stage = "Stage"
         assigned_to_user = "Assigned to User"
@@ -439,6 +441,7 @@ class AssignmentExperiment:
         fields = get_nested(self.config, ["fields", "closed_report"], {})
         df = self.raw_closed_df.copy()
 
+        review_id_col = get_col(fields, "review_id", DefaultFields.Closed.review_id)
         customer_col = get_col(fields, "customer", DefaultFields.Closed.customer)
         cm_col = get_col(fields, "cm_id", DefaultFields.Closed.cm_id)
         first_claimed_col = get_col(fields, "first_claimed_id", DefaultFields.Closed.first_claimed_id)
@@ -456,6 +459,7 @@ class AssignmentExperiment:
 
         closed = pd.DataFrame(index=df.index)
         closed["source"] = "closed"
+        closed["review_id"] = df[review_id_col].apply(clean_code) if review_id_col in df.columns else ""
         closed["customer_id"] = df[customer_col].apply(clean_customer)
         closed["cin"] = closed["customer_id"]
         closed["cm_id"] = df[cm_col].apply(clean_staff)
@@ -477,6 +481,7 @@ class AssignmentExperiment:
         fields = get_nested(self.config, ["fields", "open_report"], {})
         df = self.raw_open_df.copy()
 
+        review_id_col = get_col(fields, "review_id", DefaultFields.Open.review_id)
         customer_col = get_col(fields, "customer", DefaultFields.Open.customer)
         stage_col = get_col(fields, "stage", DefaultFields.Open.stage)
         assigned_to_user_col = get_col(fields, "assigned_to_user", DefaultFields.Open.assigned_to_user)
@@ -491,6 +496,7 @@ class AssignmentExperiment:
 
         open_df = pd.DataFrame(index=df.index)
         open_df["source"] = "open"
+        open_df["review_id"] = df[review_id_col].apply(clean_code) if review_id_col in df.columns else ""
         open_df["customer_id"] = df[customer_col].apply(clean_customer)
         open_df["cin"] = open_df["customer_id"]
         open_df["cm_id"] = self.derive_open_cm_id(
@@ -656,13 +662,31 @@ class AssignmentExperiment:
         group_hit_set = set(
             zip(history.loc[history["group_id"].ne(""), "cm_id"], history.loc[history["group_id"].ne(""), "group_id"])
         )
+        customer_review_lookup = self.latest_review_lookup(
+            history[history["customer_id"].ne("")],
+            ["cm_id", "customer_id"],
+        )
+        mg_review_lookup = self.latest_review_lookup(
+            history[history["mg_id"].ne("")],
+            ["cm_id", "mg_id"],
+        )
 
         df[f"{method}_customer_hit_{year}y"] = df.apply(
             lambda r: (r[cm_col], r["customer_id"]) in customer_hit_set if r[cm_col] else False,
             axis=1,
         )
+        df[f"{method}_customer_hit_{year}y_last_review_id"] = df.apply(
+            lambda r: customer_review_lookup.get((r[cm_col], r["customer_id"]), "")
+            if r[f"{method}_customer_hit_{year}y"] else "",
+            axis=1,
+        )
         df[f"{method}_mg_hit_{year}y"] = df.apply(
             lambda r: (r[cm_col], r["mg_id"]) in mg_hit_set if r[cm_col] and r["mg_id"] else False,
+            axis=1,
+        )
+        df[f"{method}_mg_hit_{year}y_last_review_id"] = df.apply(
+            lambda r: mg_review_lookup.get((r[cm_col], r["mg_id"]), "")
+            if r[f"{method}_mg_hit_{year}y"] else "",
             axis=1,
         )
         df[f"{method}_group_hit_{year}y"] = df.apply(
@@ -673,6 +697,16 @@ class AssignmentExperiment:
                 df[f"{method}_customer_hit_{year}y"] | df[f"{method}_group_hit_{year}y"]
         )
         return df
+
+    @staticmethod
+    def latest_review_lookup(history: pd.DataFrame, key_columns: Sequence[str]) -> dict:
+        if history.empty:
+            return {}
+        lookup_df = history[list(key_columns) + ["history_date", "review_id"]].copy()
+        lookup_df["review_id"] = lookup_df["review_id"].fillna("").astype(str)
+        lookup_df = lookup_df.sort_values("history_date")
+        latest_df = lookup_df.drop_duplicates(list(key_columns), keep="last")
+        return latest_df.set_index(list(key_columns))["review_id"].to_dict()
 
     def build_summary(self) -> pd.DataFrame:
         rows = []
@@ -811,6 +845,110 @@ class AssignmentExperiment:
             ]
         ]
 
+    def build_metric_definitions(self) -> pd.DataFrame:
+        windows = ", ".join(f"{year}y" for year in self.lookback_years)
+        rows = [
+            {
+                "sheet": "summary",
+                "field": "assigned_case_count",
+                "definition": "该方法下已分配 CM 的 case 数。",
+                "calculation_method": "统计 case_detail 中 <method>_cm_id 不为空的行数。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary",
+                "field": "customer_hit_count",
+                "definition": "分配到的 CM 在回看窗口内做过同一个 customer 的 case 数。",
+                "calculation_method": "汇总 case_detail.<method>_customer_hit_<window>y。历史窗口为 history_date >= as_of_date - window_year 且 <= as_of_date。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary",
+                "field": "customer_hit_rate",
+                "definition": "已分配 case 中 customer 命中的比例。",
+                "calculation_method": "customer_hit_count / 已分配且 customer_id 不为空的 case 数。",
+                "denominator": "已分配且 customer_id 不为空的 case。",
+            },
+            {
+                "sheet": "summary",
+                "field": "mg_hit_count",
+                "definition": "分配到的 CM 在回看窗口内做过同一个 Master Group 的 case 数。",
+                "calculation_method": "汇总 case_detail.<method>_mg_hit_<window>y。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary",
+                "field": "mg_hit_rate",
+                "definition": "有 MG 的已分配 case 中 MG 命中的比例。",
+                "calculation_method": "mg_hit_count / 已分配且 mg_id 不为空的 case 数。",
+                "denominator": "已分配且 mg_id 不为空的 case。",
+            },
+            {
+                "sheet": "summary",
+                "field": "group_hit_count",
+                "definition": "分配到的 CM 在回看窗口内做过同一个比较 group 的 case 数。",
+                "calculation_method": "汇总 case_detail.<method>_group_hit_<window>y。CORP/CMB 使用 MG；use_imis_as_group_for_bbrm=true 时 BBRM 使用 IMIS。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary",
+                "field": "group_hit_rate",
+                "definition": "有比较 group 的已分配 case 中 group 命中的比例。",
+                "calculation_method": "group_hit_count / 已分配且 group_id 不为空的 case 数。",
+                "denominator": "已分配且 group_id 不为空的 case。",
+            },
+            {
+                "sheet": "summary",
+                "field": "customer_or_group_hit_count",
+                "definition": "分配到的 CM 命中同 customer 或同比较 group 任一条件的 case 数。",
+                "calculation_method": "汇总 (<method>_customer_hit_<window>y OR <method>_group_hit_<window>y)。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary",
+                "field": "customer_or_group_hit_rate",
+                "definition": "已分配 case 中命中同 customer 或同比较 group 任一条件的比例。",
+                "calculation_method": "customer_or_group_hit_count / assigned_case_count。",
+                "denominator": "已分配 case 数。",
+            },
+            {
+                "sheet": "summary / wip_by_cm",
+                "field": "wip_after_assignment",
+                "definition": "应用本次分配结果后 CM 的在手工作量。",
+                "calculation_method": "current_wip + assigned_workload。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary / wip_by_cm",
+                "field": "over_target, over_target_amount",
+                "definition": "分配后 CM 是否超过 optimal WIP，以及超过多少。",
+                "calculation_method": "over_target_amount = max(wip_after_assignment - optimal_wip, 0)；over_target = over_target_amount > 0。",
+                "denominator": "",
+            },
+            {
+                "sheet": "case_detail",
+                "field": "<method>_customer_hit_<window>y_last_review_id",
+                "definition": "支撑 customer hit 标记的最近一条同 CM、同 customer 历史记录的 Review ID。",
+                "calculation_method": f"对每个配置窗口（{windows}），先过滤历史窗口，再按 assigned CM + customer_id 取 history_date 最新的一条记录。",
+                "denominator": "",
+            },
+            {
+                "sheet": "case_detail",
+                "field": "<method>_mg_hit_<window>y_last_review_id",
+                "definition": "支撑 MG hit 标记的最近一条同 CM、同 MG 历史记录的 Review ID。",
+                "calculation_method": f"对每个配置窗口（{windows}），先过滤历史窗口，再按 assigned CM + mg_id 取 history_date 最新的一条记录。",
+                "denominator": "",
+            },
+            {
+                "sheet": "all",
+                "field": "as_of_date / lookback window",
+                "definition": "实验只统计 as_of_date 当天及之前的历史记录。",
+                "calculation_method": f"as_of_date = {self.as_of_date.date()}；配置的回看窗口 = {windows}。",
+                "denominator": "",
+            },
+        ]
+        return pd.DataFrame(rows)
+
     def output_result(
             self,
             summary_df: pd.DataFrame,
@@ -825,6 +963,7 @@ class AssignmentExperiment:
 
         with pd.ExcelWriter(output_path) as writer:
             summary_df.to_excel(writer, sheet_name="summary", index=False)
+            self.build_metric_definitions().to_excel(writer, sheet_name="metric_definitions", index=False)
             self.case_detail_df.to_excel(writer, sheet_name="case_detail", index=False)
             wip_by_cm_df.to_excel(writer, sheet_name="wip_by_cm", index=False)
             wip_by_team_cm_df.to_excel(writer, sheet_name="wip_by_team_cm", index=False)
