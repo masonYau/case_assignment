@@ -227,26 +227,6 @@ class AssignmentExperiment:
         self.proposed_df = pd.DataFrame()
         self.case_detail_df = pd.DataFrame()
 
-    def run(self):
-        logging.info("Start assignment comparison experiment")
-        self.read_input()
-        self.prepare_case_list()
-        self.prepare_cm_list()
-        self.prepare_group_mapping()
-        self.prepare_history()
-        self.run_proposed_assignment()
-        self.build_case_detail()
-        summary_df = self.build_summary()
-        wip_by_cm_df, wip_by_team_cm_df, wip_by_team_df = self.build_wip_summary()
-        mapping_check_df = self.build_mapping_check()
-        self.output_result(
-            summary_df=summary_df,
-            wip_by_cm_df=wip_by_cm_df,
-            wip_by_team_cm_df=wip_by_team_cm_df,
-            wip_by_team_df=wip_by_team_df,
-            mapping_check_df=mapping_check_df,
-        )
-        logging.info("Assignment comparison experiment finished")
 
     def read_input(self):
         files = self.config["files"]
@@ -1002,6 +982,26 @@ class AssignmentExperiment:
                 return value
         return ""
 
+    def run(self):
+        logging.info("Start assignment comparison experiment")
+        self.read_input()
+        self.prepare_case_list()
+        self.prepare_cm_list()
+        self.prepare_group_mapping()
+        self.prepare_history()
+        self.run_proposed_assignment()
+        self.build_case_detail()
+        summary_df = self.build_summary()
+        wip_by_cm_df, wip_by_team_cm_df, wip_by_team_df = self.build_wip_summary()
+        mapping_check_df = self.build_mapping_check()
+        self.output_result(
+            summary_df=summary_df,
+            wip_by_cm_df=wip_by_cm_df,
+            wip_by_team_cm_df=wip_by_team_cm_df,
+            wip_by_team_df=wip_by_team_df,
+            mapping_check_df=mapping_check_df,
+        )
+        logging.info("Assignment comparison experiment finished")
 
 def setup_log():
     logging.basicConfig(
@@ -1020,4 +1020,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    setup_log()
+    self = AssignmentExperiment('config.json')
+    self.run()

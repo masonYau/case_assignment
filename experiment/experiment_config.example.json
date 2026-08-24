@@ -21,34 +21,36 @@
   },
   "files": {
     "business_output": {
-      "path": "CM Assignment output.xlsx",
+      "path": "958. CM Assignment 24Jul2026 - AUG BOW.xlsx",
       "sheet_name": "CMAssignmentFullList",
       "header": 0,
       "orientation": "auto"
     },
     "cm_list": {
-      "path": "CM_LIST.xlsx",
+      "path": "CM List AMH.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     },
     "closed_report": [
-      "closed_report.csv"
+      "amh_closed_data.csv",
+      "Closed Reviews 2026.csv",
+      "amh_ntb_completed.csv"
     ],
     "open_report": [
       {
         "path": "OpenReviews_CMB_20260720.csv",
         "header": null,
-        "orientation": "fields_as_rows"
+        "orientation": "records"
       }
     ],
     "horis_mg": {
-      "path": "horis_mg.xlsx",
+      "path": "horis_mg_202606.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     },
     "bb_rm_imis_group": {
-      "path": "BBRM_IMIS_GROUP.xlsx",
-      "sheet_name": "Sheet1",
+      "path": "BBRM_IMIS_GROUP_20260814.xlsx",
+      "sheet_name": "Customer_IMIS_GROUP_20260814",
       "header": 0
     }
   },
