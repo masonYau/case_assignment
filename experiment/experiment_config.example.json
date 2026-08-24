@@ -27,7 +27,7 @@
       "orientation": "auto"
     },
     "cm_list": {
-      "path": "CM List AMH.xlsx",
+      "path": "CM_List_AMH.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     },
@@ -39,7 +39,7 @@
     "open_report": [
       {
         "path": "OpenReviews_CMB_20260720.csv",
-        "header": null,
+        "header": 0,
         "orientation": "records"
       }
     ],
