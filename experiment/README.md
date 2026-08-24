@@ -127,5 +127,6 @@ WIP:
 
 ```text
 wip_after_assignment = current_wip + assigned_workload
+wip_after_one_month = max(wip_after_assignment - Last 3 month Productivity * 20, 0)
 over_target_amount = max(wip_after_assignment - optimal_wip, 0)
 ```

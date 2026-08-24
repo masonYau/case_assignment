@@ -726,6 +726,8 @@ class AssignmentExperiment:
             cm_count=("cm_id", "count"),
             avg_wip_after=("wip_after_assignment", "mean"),
             max_wip_after=("wip_after_assignment", "max"),
+            avg_wip_after_one_month=("wip_after_one_month", "mean"),
+            max_wip_after_one_month=("wip_after_one_month", "max"),
             over_target_cm_count=("over_target", "sum"),
             total_over_target=("over_target_amount", "sum"),
         )
@@ -758,6 +760,7 @@ class AssignmentExperiment:
             method_df["team"] = method_df["team"].fillna("")
             method_df["current_wip"] = method_df["current_wip"].fillna(0)
             method_df["optimal_wip"] = method_df["optimal_wip"].fillna(0)
+            method_df["productivity"] = method_df["productivity"].fillna(0)
             method_df["assigned_case_count"] = method_df["assigned_case_count"].fillna(0)
             method_df["assigned_workload"] = method_df["assigned_workload"].fillna(0)
             method_df["assigned_team"] = method_df["assigned_team"].fillna("")
@@ -768,6 +771,9 @@ class AssignmentExperiment:
         wip_by_cm["wip_after_assignment"] = wip_by_cm["current_wip"] + wip_by_cm["assigned_workload"]
         wip_by_cm["over_target_amount"] = (wip_by_cm["wip_after_assignment"] - wip_by_cm["optimal_wip"]).clip(lower=0)
         wip_by_cm["over_target"] = wip_by_cm["over_target_amount"] > 0
+        wip_by_cm["wip_after_one_month"] = (
+                wip_by_cm["wip_after_assignment"] - wip_by_cm["productivity"] * 20
+        ).clip(lower=0)
         wip_by_cm["utilization_after"] = np.where(
             wip_by_cm["optimal_wip"] > 0,
             wip_by_cm["wip_after_assignment"] / wip_by_cm["optimal_wip"],
@@ -785,7 +791,8 @@ class AssignmentExperiment:
             [
                 "method", "team", "cm_id", "cm_name", "current_wip", "optimal_wip",
                 "assigned_case_count", "assigned_workload", "wip_after_assignment",
-                "over_target", "over_target_amount", "utilization_after", "share_of_total_assigned",
+                "wip_after_one_month", "over_target", "over_target_amount",
+                "utilization_after", "share_of_total_assigned",
             ]
         ].copy()
 
@@ -796,6 +803,7 @@ class AssignmentExperiment:
             assigned_case_count=("assigned_case_count", "sum"),
             assigned_workload=("assigned_workload", "sum"),
             wip_after_assignment_sum=("wip_after_assignment", "sum"),
+            wip_after_one_month=("wip_after_one_month", "sum"),
             over_target_cm_count=("over_target", "sum"),
             over_target_amount_sum=("over_target_amount", "sum"),
             avg_utilization_after=("utilization_after", "mean"),
@@ -896,6 +904,20 @@ class AssignmentExperiment:
                 "field": "wip_after_assignment",
                 "definition": "应用本次分配结果后 CM 的在手工作量。",
                 "calculation_method": "current_wip + assigned_workload。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary / wip_by_cm / wip_by_team_cm / wip_by_team",
+                "field": "wip_after_one_month",
+                "definition": "按最近 3 个月个人 productivity 估算，该 CM 工作一个月后预计剩余的 WIP。",
+                "calculation_method": "CM 粒度为 max(wip_after_assignment - productivity * 20, 0)。其中 productivity 来自 CM_LIST 的 Last 3 month Productivity，20 代表一个月约 20 个工作日。Team 粒度为组内 CM 的 wip_after_one_month 合计。",
+                "denominator": "",
+            },
+            {
+                "sheet": "summary",
+                "field": "avg_wip_after_one_month, max_wip_after_one_month",
+                "definition": "按 method 汇总的一月后预计剩余 WIP 平均值和最大值。",
+                "calculation_method": "基于 wip_by_cm 中每个 CM 的 wip_after_one_month，按 method 分组后取 mean 和 max。",
                 "denominator": "",
             },
             {
