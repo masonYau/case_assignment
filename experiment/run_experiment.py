@@ -575,7 +575,9 @@ class AssignmentExperiment:
     def build_algorithm_task_df(self) -> pd.DataFrame:
         market = self.config.get("market", "")
         legal_entity = self.config.get("legal_entity", "")
-        due_date = self.case_df["due_date"].fillna(self.as_of_date + pd.Timedelta(days=120))
+        due_date = (self.case_df["due_date"] + pd.Timedelta(days=120)).fillna(
+            self.as_of_date + pd.Timedelta(days=120)
+        )
         return pd.DataFrame({
             th.task_id: self.case_df["customer_id"],
             th.customer_id: self.case_df["customer_id"],
