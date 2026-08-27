@@ -72,6 +72,7 @@ class DefaultFields:
         review_id = "Review ID"
         customer = "Customer Number"
         stage = "Stage"
+        task_status = "Task Status"
         assigned_to_user = "Assigned to User"
         user_id = "User ID"
         latest_dc_by = "DC Finalized by ID"
@@ -410,6 +411,8 @@ class AssignmentExperiment:
     def prepare_history(self):
         closed_df = self.prepare_closed_history()
         open_df = self.prepare_open_history()
+        self.closed_history_df = closed_df
+        self.open_history_df = open_df
         history_df = pd.concat([closed_df, open_df], ignore_index=True)
         history_df = history_df[history_df["cm_id"] != ""].copy()
         history_df = history_df[history_df["history_date"].notna()].copy()
@@ -464,6 +467,7 @@ class AssignmentExperiment:
         review_id_col = get_col(fields, "review_id", DefaultFields.Open.review_id)
         customer_col = get_col(fields, "customer", DefaultFields.Open.customer)
         stage_col = get_col(fields, "stage", DefaultFields.Open.stage)
+        task_status_col = get_col(fields, "task_status", DefaultFields.Open.task_status)
         assigned_to_user_col = get_col(fields, "assigned_to_user", DefaultFields.Open.assigned_to_user)
         user_id_col = get_col(fields, "user_id", DefaultFields.Open.user_id)
         latest_dc_by_col = get_col(fields, "latest_dc_by", DefaultFields.Open.latest_dc_by)
@@ -479,6 +483,13 @@ class AssignmentExperiment:
         open_df["review_id"] = df[review_id_col].apply(clean_code) if review_id_col in df.columns else ""
         open_df["customer_id"] = df[customer_col].apply(clean_customer)
         open_df["cin"] = open_df["customer_id"]
+        open_df["stage"] = df[stage_col].fillna("").astype(str) if stage_col in df.columns else ""
+        open_df["task_status"] = df[task_status_col].fillna("").astype(str) if task_status_col in df.columns else ""
+        open_df["assigned_to_user"] = (
+            df[assigned_to_user_col].fillna("").astype(str) if assigned_to_user_col in df.columns else ""
+        )
+        open_df["user_id"] = df[user_id_col].apply(clean_staff) if user_id_col in df.columns else ""
+        open_df["latest_dc_by"] = df[latest_dc_by_col].apply(clean_staff) if latest_dc_by_col in df.columns else ""
         open_df["cm_id"] = self.derive_open_cm_id(
             df,
             stage_col=stage_col,
@@ -553,6 +564,7 @@ class AssignmentExperiment:
         allocator.read_data()
         allocator.add_history_customer_to_analyst()
         res_df = allocator.run_top_n_analyst(n=self.config.get("top_n", 3))
+        res_df = self.add_algorithm_output_group_fields(res_df)
 
         if output_result:
             res_df.to_excel(f"AMH ETB Assign Result {self.as_of_date.date()}.xlsx", index=False)
@@ -567,6 +579,14 @@ class AssignmentExperiment:
             "proposed_cm_id": res_df["Assigned Analyst ID 1"].apply(clean_staff),
             "proposed_score": res_df.get("Score Total 1", np.nan),
         })
+
+    def add_algorithm_output_group_fields(self, res_df: pd.DataFrame) -> pd.DataFrame:
+        if res_df.empty:
+            return res_df
+        output_fields = self.case_output_group_fields().copy()
+        output_fields["Task ID"] = output_fields["customer_id"]
+        output_fields = output_fields.drop(columns=["customer_id"]).drop_duplicates("Task ID", keep="first")
+        return res_df.merge(output_fields, how="left", on="Task ID")
 
     def build_algorithm_analyst_df(self) -> pd.DataFrame:
         return pd.DataFrame({
@@ -623,6 +643,8 @@ class AssignmentExperiment:
         df["proposed_cm_id"] = df["proposed_cm_id"].fillna("").apply(clean_staff)
         df = self.add_cm_info(df, cm_col="business_cm_id", prefix="business")
         df = self.add_cm_info(df, cm_col="proposed_cm_id", prefix="proposed")
+        output_fields = self.case_output_group_fields().drop_duplicates("customer_id", keep="first")
+        df = df.merge(output_fields, how="left", on="customer_id")
 
         for method in ["business", "proposed"]:
             cm_col = f"{method}_cm_id"
@@ -630,6 +652,84 @@ class AssignmentExperiment:
                 df = self.add_hit_flags(df, method=method, cm_col=cm_col, year=year)
 
         self.case_detail_df = df
+
+    def case_output_group_fields(self) -> pd.DataFrame:
+        df = self.case_df[["customer_id", "mg_id", "mg_name", "imis_id", "imis_name"]].copy()
+        df["Master Group ID"] = df["mg_id"].fillna("")
+        df["Master Group"] = df["mg_name"].fillna("")
+        df["IMIS Group No"] = df["imis_id"].fillna("")
+        df["IMIS Group"] = df["imis_name"].fillna("")
+        df["WIP Master Group CM"] = self.wip_group_cm_values(df)
+        return df[["customer_id", "Master Group ID", "Master Group", "IMIS Group No", "IMIS Group", "WIP Master Group CM"]]
+
+    def wip_group_cm_values(self, df: pd.DataFrame) -> pd.Series:
+        lookup = self.build_wip_group_cm_lookup()
+
+        def find_wip_cm(row):
+            matches = []
+            for group_type, group_id_col in [("mg", "mg_id"), ("imis", "imis_id")]:
+                group_id = row.get(group_id_col, "")
+                if group_id:
+                    matches.extend(lookup[group_type].get(group_id, []))
+            return self.join_unique_values(matches)
+
+        return df.apply(find_wip_cm, axis=1)
+
+    def build_wip_group_cm_lookup(self) -> dict:
+        empty_lookup = {"mg": {}, "imis": {}}
+        if self.open_history_df.empty:
+            return empty_lookup
+
+        open_wip = self.open_history_df.copy()
+        open_wip = open_wip[open_wip["history_date"].notna()].copy()
+        open_wip = open_wip[open_wip["history_date"] <= self.as_of_date].copy()
+        open_wip = self.filter_open_wip_cases(open_wip)
+        if open_wip.empty:
+            return empty_lookup
+
+        open_wip["wip_cm_display"] = self.open_wip_cm_display(open_wip)
+        open_wip = open_wip[open_wip["wip_cm_display"].ne("")].copy()
+        if open_wip.empty:
+            return empty_lookup
+
+        return {
+            "mg": self.latest_wip_cm_by_group(open_wip, "mg_id"),
+            "imis": self.latest_wip_cm_by_group(open_wip, "imis_id"),
+        }
+
+    def filter_open_wip_cases(self, open_df: pd.DataFrame) -> pd.DataFrame:
+        df = open_df.copy()
+        if "task_status" in df.columns:
+            task_status_norm = df["task_status"].apply(norm_text)
+            if task_status_norm.ne("").any():
+                wip_statuses = {norm_text(v) for v in as_list(self.config.get("open_report_wip_statuses", ["WIP"]))}
+                df = df[task_status_norm.isin(wip_statuses)].copy()
+
+        if "stage" in df.columns:
+            stage_norm = df["stage"].apply(norm_text)
+            approval_stages = {
+                norm_text(v) for v in as_list(self.config.get("open_report_approval_stages", [st.APP, "APPROVAL"]))
+            }
+            is_approval_stage = stage_norm.isin(approval_stages) | stage_norm.str.contains("APPROVAL", na=False)
+            df = df[~is_approval_stage].copy()
+        return df
+
+    def open_wip_cm_display(self, open_wip: pd.DataFrame) -> pd.Series:
+        cm_name_by_id = self.cm_df.set_index("cm_id")["cm_name"].to_dict()
+        display = open_wip["cm_id"].map(cm_name_by_id).fillna("")
+        for fallback_col in ["assigned_to_user", "user_id", "latest_dc_by", "cm_id"]:
+            if fallback_col in open_wip.columns:
+                fallback = open_wip[fallback_col].fillna("").astype(str).str.strip()
+                display = display.mask(display.eq(""), fallback)
+        return display.fillna("").astype(str).str.strip()
+
+    def latest_wip_cm_by_group(self, open_wip: pd.DataFrame, group_col: str) -> dict:
+        grouped = open_wip[open_wip[group_col].ne("")].copy()
+        if grouped.empty:
+            return {}
+        grouped = grouped.sort_values("history_date", ascending=False)
+        latest = grouped.drop_duplicates(group_col, keep="first")
+        return latest.set_index(group_col)["wip_cm_display"].apply(lambda value: [value]).to_dict()
 
     def add_cm_info(self, df: pd.DataFrame, cm_col: str, prefix: str) -> pd.DataFrame:
         cm_info = self.cm_df[["cm_id", "cm_name", "team"]].copy()
@@ -948,6 +1048,20 @@ class AssignmentExperiment:
                 "denominator": "",
             },
             {
+                "sheet": "case_detail / algorithm output",
+                "field": "Master Group ID, Master Group, IMIS Group No, IMIS Group",
+                "definition": "按实验配置重新匹配后的 Master Group 和 IMIS Group 信息。",
+                "calculation_method": "Master Group 来自 horis_mg 按 CIN 匹配，匹配不到时回退到 business output；IMIS Group 来自 BBRM_IMIS_GROUP 按配置的 imis_mapping_key 匹配，匹配不到时回退到 business output。",
+                "denominator": "",
+            },
+            {
+                "sheet": "case_detail / algorithm output",
+                "field": "WIP Master Group CM",
+                "definition": "Open Report 中同 Master Group 或同 IMIS Group 的 WIP case 对应 CM。",
+                "calculation_method": "从 Open Report 取 as_of_date 当天及之前记录；如有 Task Status 列，默认只保留 WIP；默认排除 APP/Approval stage；按 Master Group ID 或 IMIS Group No 匹配后合并到同一个字段。",
+                "denominator": "",
+            },
+            {
                 "sheet": "all",
                 "field": "as_of_date / lookback window",
                 "definition": "实验只统计 as_of_date 当天及之前的历史记录。",
@@ -1004,6 +1118,24 @@ class AssignmentExperiment:
         return num / den
 
     @staticmethod
+    def unique_values(values):
+        result = []
+        seen = set()
+        for value in values:
+            if pd.isna(value):
+                continue
+            text = str(value).strip()
+            if text == "" or text in seen:
+                continue
+            result.append(text)
+            seen.add(text)
+        return result
+
+    @staticmethod
+    def join_unique_values(values):
+        return "; ".join(AssignmentExperiment.unique_values(values))
+
+    @staticmethod
     def first_non_blank(values):
         for value in values:
             if pd.notna(value) and str(value).strip() != "":
@@ -1048,6 +1180,4 @@ def main():
 
 
 if __name__ == "__main__":
-    setup_log()
-    self = AssignmentExperiment('config.json')
-    self.run()
+    main()

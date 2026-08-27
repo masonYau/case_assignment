@@ -60,6 +60,7 @@ open report 的截图样例也是字段在第一列、case 横向展开的格式
 "open_report": {
   "customer": "Customer Number",
   "stage": "Stage",
+  "task_status": "Task Status",
   "assigned_to_user": "Assigned to User",
   "user_id": "User ID",
   "latest_dc_by": "DC Finalized by ID",
@@ -96,6 +97,16 @@ open report 的截图样例也是字段在第一列、case 横向展开的格式
 
 `case_detail` 中的 `<method>_customer_hit_<window>y_last_review_id` 和
 `<method>_mg_hit_<window>y_last_review_id` 会显示支撑 CUSTOMER/MG 命中的最近一条历史 review id。
+
+`case_detail` 和算法中间输出中会额外带出这些业务字段：
+
+- `Master Group ID`
+- `Master Group`
+- `IMIS Group No`
+- `IMIS Group`
+- `WIP Master Group CM`
+
+`WIP Master Group CM` 从 Open Report 中匹配同 Master Group 或同 IMIS Group 的 WIP case 后取得；如果 Open Report 有 `Task Status` 列，默认只保留 `WIP`，并默认排除 `APP` / approval stage。
 
 ## Metric Notes
 

@@ -112,6 +112,7 @@
       "review_id": "Review ID",
       "customer": "Customer Number",
       "stage": "Stage",
+      "task_status": "Task Status",
       "assigned_to_user": "Assigned to User",
       "user_id": "User ID",
       "latest_dc_by": "DC Finalized by ID",
