@@ -535,11 +535,12 @@ class AssignmentExperiment:
 
         return df.apply(get_staff_id, axis=1)
 
-    def run_proposed_assignment(self):
+    def run_proposed_assignment(self, output_result=True):
         analyst_df = self.build_algorithm_analyst_df()
         task_df = self.build_algorithm_task_df()
         close_df = self.build_algorithm_closed_df()
         open_df = self.build_algorithm_open_df()
+        analyst_df["Last 3 month Productivity"] = analyst_df["Last 3 month Productivity"].apply(lambda x: min(x, 1))
 
         allocator = CDDTaskAllocator(
             df_analysts=analyst_df,
@@ -552,6 +553,9 @@ class AssignmentExperiment:
         allocator.read_data()
         allocator.add_history_customer_to_analyst()
         res_df = allocator.run_top_n_analyst(n=self.config.get("top_n", 3))
+
+        if output_result:
+            res_df.to_excel(f"AMH ETB Assign Result {self.as_of_date.date()}.xlsx", index=False)
 
         if res_df.empty:
             self.proposed_df = pd.DataFrame(columns=["customer_id", "proposed_cm_id"])
