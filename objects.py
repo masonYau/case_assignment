@@ -16,10 +16,13 @@ class Analyst:
         self.history_customers = set()
         self.history_rms = set()
         self.history_mgs = set()
+        self.wip_mgs = set()
+        self.batch_mgs = set()
         self.history_segment = set()
 
     def reset_wip(self):
         self.current_wip = self._ori_wip
+        self.batch_mgs = set()
 
     def __repr__(self):
         return f"<Analyst {self.analyst_id}>"

@@ -50,6 +50,7 @@ class CDDTaskAllocator:
             'mg_affinity_weight': 80.0,
             'rm_affinity_weight': 50.0,
             'segment_affinity_weight': 100.0,
+            'wip_batch_group_affinity_weight': 300.0,
             'capacity_weight': 5.0,
             'overload_penalty': 5.0,
             'simulate_decay': True
@@ -70,7 +71,31 @@ class CDDTaskAllocator:
 
     def read_data(self):
         self.analysts = {str(row[ah.analyst_id]): Analyst(row) for _, row in self.df_analysts.iterrows()}
-        self.tasks = {str(row[th.task_id]): CDDTask(row) for _, row in self.df_tasks.iterrows()}
+        self.tasks = {}
+        for _, row in self.df_tasks.iterrows():
+            task = CDDTask(row)
+            task.mg_num = self._clean_group(row.get(mh.MasterGroupCode, ""))
+            self.tasks[task.task_id] = task
+
+    @staticmethod
+    def _clean_code(value):
+        if pd.isna(value):
+            return ""
+        text = str(value).strip()
+        if text.endswith(".0"):
+            text = text[:-2]
+        return text
+
+    @classmethod
+    def _clean_group(cls, value):
+        text = cls._clean_code(value).lstrip("0")
+        if text.upper() in {"", "0", "-", "NA", "N/A", "NONE", "NAN"}:
+            return ""
+        return text
+
+    @classmethod
+    def _clean_staff(cls, value):
+        return cls._clean_code(value)
 
     def add_wip_segment_to_analyst(self):
         open_df = self.df_open.copy()
@@ -84,12 +109,27 @@ class CDDTaskAllocator:
                 self.analysts[analyst].history_segment = self.analysts[analyst].history_segment.union(
                     set(segments))
 
+    def add_wip_group_to_analyst(self):
+        open_df = self.df_open.copy()
+        if oh.StaffID not in open_df.columns or mh.MasterGroupCode not in open_df.columns:
+            return
+
+        open_df[oh.StaffID] = open_df[oh.StaffID].apply(self._clean_staff)
+        open_df[mh.MasterGroupCode] = open_df[mh.MasterGroupCode].apply(self._clean_group)
+        open_df = open_df[(open_df[oh.StaffID] != "") & (open_df[mh.MasterGroupCode] != "")]
+
+        for analyst, sub_df in open_df.groupby(oh.StaffID):
+            if analyst in self.analysts:
+                self.analysts[analyst].wip_mgs = self.analysts[analyst].wip_mgs.union(
+                    set(sub_df[mh.MasterGroupCode].drop_duplicates().to_list()))
+
     def add_history_customer_to_analyst(self):
         history_close_df = self.df_close.copy()
         history_close_df[ch.CustomerNumber] = history_close_df[
             ch.CustomerNumber].astype(str).apply(lambda x: x.lstrip('0'))
         history_close_df[ch.LatestDcFinalisedById] = history_close_df[ch.LatestDcFinalisedById].astype(str)
         history_close_df[ch.RmNum] = history_close_df[ch.RmNum].astype(str)
+        history_close_df[mh.MasterGroupCode] = history_close_df[mh.MasterGroupCode].apply(self._clean_group)
         completed_history_close_df = history_close_df[
             history_close_df[ch.ReviewStatus] == "Approval Completed"
         ]
@@ -122,7 +162,7 @@ class CDDTaskAllocator:
         last_review_with_mg = last_review[~last_review[mh.MasterGroupCode].isin({'-', ''})]
         for idx, row in last_review_with_mg.iterrows():
             customer, mg = row[ch.CustomerNumber], row[mh.MasterGroupCode]
-            if customer in self.tasks:
+            if customer in self.tasks and self.tasks[customer].mg_num == "":
                 self.tasks[customer].mg_num = mg
 
         last_review_with_segment = last_review[~last_review[ch.Segment].isin({'-', ''})]
@@ -131,10 +171,11 @@ class CDDTaskAllocator:
             if customer in self.tasks:
                 self.tasks[customer].segment = segment
 
+        self.add_wip_group_to_analyst()
         self.add_wip_segment_to_analyst()
 
     def _calculate_score(self, analyst, task):
-        """计算匹配分数 (逻辑保持不变)"""
+        """计算匹配分数"""
         reasons = {}
 
         # 1. 历史经验分 (Affinity)
@@ -150,6 +191,16 @@ class CDDTaskAllocator:
                 task.mg_num != "" and task.mg_num in analyst.history_mgs and not has_cust_history) else 0
         mg_affinity_score = has_mg_history * self.config['mg_affinity_weight']
         reasons['mg_affinity'] = mg_affinity_score
+
+        has_wip_batch_group_history = 1 if (
+                task.mg_num != "" and (
+                    task.mg_num in analyst.wip_mgs or task.mg_num in analyst.batch_mgs
+                )
+        ) else 0
+        wip_batch_group_affinity_score = (
+                has_wip_batch_group_history * self.config['wip_batch_group_affinity_weight']
+        )
+        reasons['wip_batch_group_affinity'] = wip_batch_group_affinity_score
 
         has_rm_history = 1 if (
                 task.rm_num != "" and task.rm_num in analyst.history_rms and not has_cust_history and not has_mg_history
@@ -167,10 +218,16 @@ class CDDTaskAllocator:
             reasons['mg_affinity'] *= 10
             reasons['rm_affinity'] *= 10
             reasons['segment_affinity'] *= 10
+            reasons['wip_batch_group_affinity'] *= 10
         reasons['capacity'] = capacity_score
 
         score = sum(v for k, v in reasons.items())
         return score, reasons
+
+    def _record_batch_group_assignment(self, analyst, task):
+        group = self._clean_group(task.mg_num)
+        if group:
+            analyst.batch_mgs.add(group)
 
     def _simulate_wip_release(self, current_week_start, last_week_start):
         """模拟时间推移释放产能"""
@@ -233,6 +290,7 @@ class CDDTaskAllocator:
                     "Score Total": best_score,
                     "Score Customer Affinity": best_reasons.get('customer_affinity'),
                     "Score MG Affinity": best_reasons.get('mg_affinity'),
+                    "Score WIP/Batch Group Affinity": best_reasons.get('wip_batch_group_affinity'),
                     "Score RM Affinity": best_reasons.get('rm_affinity'),
                     "Score Capacity": best_reasons.get('capacity'),
                     "Analyst WIP After": best_analyst.current_wip + task.effort
@@ -240,6 +298,7 @@ class CDDTaskAllocator:
                 # 更新状态
                 best_analyst.current_wip += task.effort
                 self.selected_analyst[task.task_id].append(best_analyst.analyst_id)
+                self._record_batch_group_assignment(best_analyst, task)
                 # best_analyst.history_customers.add(task.customer_id)
                 if task.rm_num != "":
                     best_analyst.history_rms.add(task.rm_num)
@@ -293,6 +352,8 @@ class CDDTaskAllocator:
                         f"Score Total {i+1}": analyst_score[analyst_id],
                         f"Score Customer Affinity {i+1}": analyst_reason[analyst_id].get('customer_affinity'),
                         f"Score MG Affinity {i+1}": analyst_reason[analyst_id].get('mg_affinity'),
+                        f"Score WIP/Batch Group Affinity {i+1}": analyst_reason[analyst_id].get(
+                            'wip_batch_group_affinity'),
                         f"Score RM Affinity {i+1}": analyst_reason[analyst_id].get('rm_affinity'),
                         f"Score Segment Affinity {i + 1}": analyst_reason[analyst_id].get('segment_affinity'),
                         f"Score Capacity {i+1}": analyst_reason[analyst_id].get('capacity'),
@@ -303,6 +364,7 @@ class CDDTaskAllocator:
                     best_analyst = self.analysts[analyst_id]
                     best_analyst.current_wip += task.effort
                     self.selected_analyst[task.task_id].append(best_analyst.analyst_id)
+                    self._record_batch_group_assignment(best_analyst, task)
                     # best_analyst.history_customers.add(task.customer_id)
                     if task.rm_num != "":
                         best_analyst.history_rms.add(task.rm_num)
@@ -326,8 +388,8 @@ class CDDTaskAllocator:
             res_dict[i] = res
 
         res_col = [
-            'Assigned Analyst ID', 'Score Total', 'Score Customer Affinity', 'Score MG Affinity', 'Score RM Affinity',
-            'Score Capacity', 'Analyst WIP After'
+            'Assigned Analyst ID', 'Score Total', 'Score Customer Affinity', 'Score MG Affinity',
+            'Score WIP/Batch Group Affinity', 'Score RM Affinity', 'Score Capacity', 'Analyst WIP After'
         ]
         all_df = list()
         for i, res_df in res_dict.items():

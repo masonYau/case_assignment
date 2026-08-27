@@ -18,6 +18,7 @@
     "mg_affinity_weight": 80.0,
     "rm_affinity_weight": 50.0,
     "segment_affinity_weight": 100.0,
+    "wip_batch_group_affinity_weight": 300.0,
     "capacity_weight": 5.0,
     "overload_penalty": 5.0,
     "simulate_decay": true

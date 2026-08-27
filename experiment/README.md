@@ -134,6 +134,17 @@ CORP/CMB 使用 MG；BBRM 默认使用 IMIS Group
 customer_hit OR group_hit
 ```
 
+Algorithm group affinity:
+
+```text
+wip_batch_group_affinity_weight = 300
+
+如果 Open Report 的 WIP case 已经有同 Master Group / IMIS Group 的 CM，
+或本批次前面已经把同 group case 分配给某个 CM，
+则该 CM 获得额外的 WIP/Batch Group Affinity 分数。
+实验中 CORP/CMB 使用 Master Group，BBRM 使用 IMIS Group。
+```
+
 WIP:
 
 ```text

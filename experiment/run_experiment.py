@@ -611,7 +611,7 @@ class AssignmentExperiment:
             th.legal_entity: legal_entity,
             th.ppm_cdd_source: "",
             th.risk_rating: "",
-            mh.MasterGroupCode: self.case_df["mg_id"],
+            mh.MasterGroupCode: self.case_df["group_id"],
         })
 
     def build_algorithm_closed_df(self) -> pd.DataFrame:
@@ -623,7 +623,7 @@ class AssignmentExperiment:
             ch.RmNum: closed["rm_num"],
             ch.InitiatedDate: closed["history_date"],
             ch.Segment: closed["segment"],
-            mh.MasterGroupCode: closed["mg_id"],
+            mh.MasterGroupCode: closed["group_id"],
         })
 
     def build_algorithm_open_df(self) -> pd.DataFrame:
@@ -634,7 +634,7 @@ class AssignmentExperiment:
             oh.RmNum: open_df["rm_num"],
             oh.InitiatedDate: open_df["history_date"],
             ch.Segment: open_df["segment"],
-            mh.MasterGroupCode: open_df["mg_id"],
+            mh.MasterGroupCode: open_df["group_id"],
         })
 
     def build_case_detail(self):
