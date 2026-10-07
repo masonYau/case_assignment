@@ -297,7 +297,7 @@ def build_case_assignment_stats_table_with_mg_html(stats: dict) -> str:
                 <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["6m"]}</td>
                 <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["3m"]}</td>
                 <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["1m"]}</td>
-                <td style="border:1px solid #999; padding:8px; text-align:center;">{"-"}</td>
+                <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["current"]}</td>
               </tr>
             
               <tr>
@@ -356,7 +356,7 @@ def build_case_assignment_stats_table_html(stats: dict) -> str:
         <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["6m"]}</td>
         <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["3m"]}</td>
         <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["1m"]}</td>
-        <td style="border:1px solid #999; padding:8px; text-align:center;">{"-"}</td>
+        <td style="border:1px solid #999; padding:8px; text-align:center;">{stats["highest_same_cm"]["current"]}</td>
       </tr>
       <tr>
         <td style="border:1px solid #999; padding:8px;">

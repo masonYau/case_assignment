@@ -2,6 +2,7 @@ import pandas as pd
 from header import AnalystHeader as ah
 from header import TaskHeader as th
 from datetime import datetime, timedelta
+from collections import defaultdict
 
 
 class Analyst:
@@ -12,6 +13,8 @@ class Analyst:
         self.current_wip = float(row.get(ah.current_wip, 0))
         self._ori_wip = float(row.get(ah.current_wip, 0))
         self.weekly_throughput = float(row.get(ah.daily_productivity, 1.0)) * 5
+        self.team_head = row.get(ah.team_head, '')
+        self.analyst_name = row.get(ah.analyst_name, '')
 
         self.history_customers = set()
         self.history_rms = set()
@@ -19,6 +22,13 @@ class Analyst:
         self.wip_mgs = set()
         self.batch_mgs = set()
         self.history_segment = set()
+
+        self.history_customers_reviews = defaultdict(list)
+        self.history_rms_reviews = defaultdict(list)
+        self.history_mgs_reviews = defaultdict(list)
+        self.wip_mgs_reviews = defaultdict(list)
+        self.batch_mgs_reviews = defaultdict(list)
+        self.history_segment_reviews = defaultdict(list)
 
     def reset_wip(self):
         self.current_wip = self._ori_wip

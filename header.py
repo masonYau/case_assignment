@@ -5,6 +5,8 @@ class AnalystHeader:
     current_wip = "Current WIP"  # 当前在手案件
     history_customers = "Served Clients"  # 历史客户 (假设是逗号分隔的字符串或列表)
     daily_productivity = "Last 3 month Productivity"  # 每周处理速度
+    team_head = 'Team Head'
+    analyst_name = 'Analyst_Name'
 
 
 class TaskHeader:
@@ -106,6 +108,7 @@ class OpenReviewHeader:
 class MasterGroupHeader:
     CustomerNumber = "CIN"
     MasterGroupCode = "Mastergroup Code"
+    IMISId = "IMIS ID"
 
 
 class RamHeader:

@@ -53,7 +53,7 @@ def download_qlik_sense_report(config, current_date):
 
 setup_log("./")
 
-current_date = "2026-08-13"
+current_date = "2026-10-06"
 
 if os.path.isfile('qlik_config.json'):
     with open('qlik_config.json', 'r') as f:

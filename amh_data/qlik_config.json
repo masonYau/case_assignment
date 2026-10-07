@@ -1,0 +1,22 @@
+{
+  "QLIK_HOST": "ws-qs-sense.systems.uk.hsbc",
+  "QLIK_APP_ID": "af1844ea-0c16-4805-bd6f-97759e648164",
+  "CLOSED_REVIEW_OBJ_ID": "jZas",
+  "OPEN_REVIEW_OBJ": "KWnDsz",
+  "QLIK_URL": "https://ws-qs-sense.systems.uk.hsbc",
+  "QLIK_USER": "",
+  "QLIK_PSW": "",
+  "BOOKMARK_ID": "e0dac679-f19a-448d-8037-dd7abcb829d0",
+  "REPORTS": {
+    "Open Report": {
+      "obj_id": "jZbJ",
+      "output_file": "Open Reviews.csv",
+      "bookmark_config": "{<%_Language={'English'},REVIEW_REASON2={'Trigger','Periodic','Remediation (FTFR)'},LINE_OF_BUS_CDE={'CMB'},%_QC_LX_Errors_Label={'L3 Errors'},%_TEReviews_CD_Label={'Month'},%_Triggers_CD_Label={'Year'},%_vCPLimit={'4'},%_Dimension_OpenReviews_CDD={'Review ID','Customer Number','Customer Name','Market','Legal Entity','Segment','RM Num','RM Name','Review Reason','Initial Risk Rating (CDD)','Risk Rating','SCC Category','Stage','Latest Action','Stage Claimed Date','Stage Start Date','Task Status','Assigned to Role','Assigned to User','Date of latest action','Staff Role','User ID','Initiated Date','First Claimed Date','Overall Age','Age Bucket','Review Status','Approval/Cancel Date','Last CDD Review Completion Date','Latest DC Finalised by ID','Latest DC Finalised Date','Actual Renewal Date','First Claimed ID','Initial Quality Score','Initial DC Finalised by ID','Initial DC Finalised Date','Trigger Start Date','Customer Incorporation Number'},[=If(REVIEW_STATUS=1,CDD_STAT_CDE_FILTER2)]={'Open'}>}"
+    },
+    "Closed Report 2026": {
+      "obj_id": "759986ee-4268-481b-b0c9-f4fb47d709e5",
+      "output_file": "Closed Reviews 2026.csv",
+      "bookmark_config": "{<%_Language={'English'},REVIEW_REASON2={'Trigger','Periodic','Remediation (FTFR)'},LINE_OF_BUS_CDE={'CMB'},COUNTRY={'Hong Kong SAR'},CDD_LAST_CMPLT_DATE={\"*2026\"},%_Dimension_ClosedReviews_CDD={'Review ID','Customer Number','Country/Territory Region','Market','Legal Entity','Segment','RM Num','Review Reason','Risk Rating','Stage','Initiated Date','Review Status','Approval/Cancel Date','Latest DC Finalised by ID','Latest DC Finalised Date','First Claimed ID'}>}"
+    }
+  }
+}
