@@ -6,6 +6,11 @@
   "debug": true,
   "lookback_years": [2, 5],
   "default_workload": 1.0,
+  "cm_defaults": {
+    "current_wip": 60,
+    "optimal_wip": 60,
+    "productivity": 1.1
+  },
   "top_n": 3,
   "closed_completed_only": true,
   "algorithm_config": {

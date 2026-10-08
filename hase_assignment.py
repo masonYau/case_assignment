@@ -76,9 +76,9 @@ class DefaultFields:
         task_status = "Task Status"
         assigned_to_user = "Assigned to User"
         user_id = "User ID"
-        latest_dc_by = "DC Finalized by ID"
+        latest_dc_by = "Latest DC Finalised by ID"
         cm_id = "Staff ID"
-        date_candidates = ["Initiated Date", "DC Finalized Date", "Date of latest action", "Stage Start Date"]
+        date_candidates = ["Initiated Date", "Latest DC Finalised Date", "Date of latest action", "Stage Claimed Date"]
         rm_num = "RM Num"
         segment = "Segment"
 
@@ -258,7 +258,7 @@ class HaseAssignment:
         self.case_df = case_df
 
     def prepare_cm_list(self):
-        """Normalize the HASE CM roster without inferring capacity or availability."""
+        """Normalize the HASE CM roster using configured WIP and capacity values."""
         fields = self.config.get("fields", {}).get("cm_list", {})
         df = self.raw_cm_df.copy()
         df.columns = [str(column).strip() for column in df.columns]
@@ -290,22 +290,237 @@ class HaseAssignment:
         cm_df["mass"] = values("mass").apply(norm_text)
         cm_df["remark"] = values("remark").apply(clean_code)
 
-        # Unlike AMH, the HASE source need not contain capacity metrics. Leave unknown
-        # values as NaN so later WIP/capacity preparation can supply actual values.
+        defaults = self.config.get("cm_defaults", {})
         for key in ("current_wip", "optimal_wip", "productivity"):
-            cm_df[key] = pd.to_numeric(values(key), errors="coerce")
+            value = defaults.get(key)
+            if isinstance(value, bool):
+                raise ValueError(f"cm_defaults.{key} must be a finite non-negative number")
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"cm_defaults.{key} must be a finite non-negative number") from None
+            if not np.isfinite(value) or value < 0:
+                raise ValueError(f"cm_defaults.{key} must be a finite non-negative number")
+            cm_df[key] = value
 
         cm_df = cm_df[cm_df["cm_id"] != ""].drop_duplicates("cm_id", keep="last").reset_index(drop=True)
-        for key in ("current_wip", "optimal_wip", "productivity"):
-            unknown = int(cm_df[key].isna().sum())
-            if unknown:
-                message = (
-                    f"cm_list: {unknown} CM rows have missing or invalid {key}; "
-                    "values remain unknown until WIP/capacity preparation."
-                )
-                if message not in self.warnings:
-                    self.warnings.append(message)
         self.cm_df = cm_df
+
+    def prepare_history(self) -> pd.DataFrame:
+        """Combine HASE history using AMH's CM/date filters, without group keys."""
+        closed_df = self.prepare_closed_history()
+        open_df = self.prepare_open_history()
+        history_df = pd.concat([closed_df, open_df], ignore_index=True)
+        history_df = history_df[
+            history_df["cm_id"].notna()
+            & history_df["cm_id"].ne("")
+            & history_df["history_date"].notna()
+            & history_df["history_date"].le(self.as_of_date)
+        ].copy()
+        self.history_df = history_df.reset_index(drop=True)
+        return self.history_df
+
+    def prepare_closed_history(self) -> pd.DataFrame:
+        """Normalize closed reviews without the AMH Master Group/IMIS mappings."""
+        fields = self.config.get("fields", {}).get("closed_report", {})
+        df = self.raw_closed_df.copy()
+        df.columns = [str(column).strip() for column in df.columns]
+
+        def column(key):
+            return fields.get(key, getattr(DefaultFields.Closed, key))
+
+        required = [column("customer"), column("cm_id")]
+        if self.config.get("closed_completed_only", True):
+            required.append(column("review_status"))
+        missing = [name for name in required if name not in df.columns]
+        if missing:
+            raise ValueError(f"closed_report missing required columns: {missing}")
+
+        if self.config.get("closed_completed_only", True):
+            df = df[df[column("review_status")].eq(column("completed_status"))].copy()
+
+        def values(key):
+            name = column(key)
+            return df[name] if name in df.columns else pd.Series("", index=df.index, dtype=object)
+
+        closed = pd.DataFrame(index=df.index)
+        closed["source"] = "closed"
+        closed["review_id"] = values("review_id").apply(clean_code)
+        closed["customer_id"] = values("customer").apply(lambda value: clean_code(value, strip_zero=True))
+        closed["cin"] = values("customer").apply(clean_code)
+        closed["cm_id"] = values("cm_id").apply(clean_code)
+        cancelled = values("review_status").eq(column("cancelled_status"))
+        fallback = cancelled & closed["cm_id"].eq("")
+        closed.loc[fallback, "cm_id"] = values("first_claimed_id").loc[fallback].apply(clean_code)
+
+        # Raw readers preserve empty strings; parse each candidate before combining
+        # so blanks/invalid dates do not prevent fallback to the next date column.
+        history_date = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+        for name in fields.get("date_candidates", DefaultFields.Closed.date_candidates):
+            if name in df.columns:
+                parsed = pd.to_datetime(df[name], errors="coerce", format="mixed")
+                history_date = history_date.fillna(parsed)
+        closed["history_date"] = history_date
+        closed["rm_num"] = values("rm_num").apply(clean_code)
+        # HASE report Segment values represent Team code.
+        closed["segment"] = values("segment").apply(clean_code)
+        closed["segment_norm"] = closed["segment"].apply(norm_text)
+        self.closed_history_df = closed.reset_index(drop=True)
+        return self.closed_history_df
+
+    def prepare_open_history(self) -> pd.DataFrame:
+        """Normalize WIP history, attributing QC/APP reviews to the DC CM."""
+        fields = self.config.get("fields", {}).get("open_report", {})
+        df = self.raw_open_df.copy()
+        df.columns = [str(column).strip() for column in df.columns]
+
+        def column(key):
+            return fields.get(key, getattr(DefaultFields.Open, key))
+
+        customer_col = column("customer")
+        if customer_col not in df.columns:
+            raise ValueError(f"open_report missing required columns: {[customer_col]}")
+
+        def values(key):
+            name = column(key)
+            return df[name] if name in df.columns else pd.Series("", index=df.index, dtype=object)
+
+        open_df = pd.DataFrame(index=df.index)
+        open_df["source"] = "open"
+        open_df["review_id"] = values("review_id").apply(clean_code)
+        open_df["customer_id"] = values("customer").apply(lambda value: clean_code(value, strip_zero=True))
+        open_df["cin"] = values("customer").apply(clean_code)
+        open_df["stage"] = values("stage").apply(norm_text)
+        open_df["task_status"] = values("task_status").apply(clean_code)
+        open_df["assigned_to_user"] = values("assigned_to_user").apply(clean_code)
+        open_df["user_id"] = values("user_id").apply(clean_code)
+        open_df["latest_dc_by"] = values("latest_dc_by").apply(clean_code)
+        open_df["cm_id"] = self.derive_open_cm_id(
+            df,
+            stage_col=column("stage"),
+            assigned_to_user_col=column("assigned_to_user"),
+            user_id_col=column("user_id"),
+            latest_dc_by_col=column("latest_dc_by"),
+            cm_col=column("cm_id"),
+        )
+        history_date = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+        for name in fields.get("date_candidates", DefaultFields.Open.date_candidates):
+            if name in df.columns:
+                parsed = pd.to_datetime(df[name], errors="coerce", format="mixed")
+                history_date = history_date.fillna(parsed)
+        open_df["history_date"] = history_date
+        open_df["rm_num"] = values("rm_num").apply(clean_code)
+        open_df["segment"] = values("segment").apply(clean_code)
+        open_df["segment_norm"] = open_df["segment"].apply(norm_text)
+        self.open_history_df = open_df.reset_index(drop=True)
+        return self.open_history_df
+
+    def build_algorithm_analyst_df(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            ah.analyst_id: self.cm_df["cm_id"],
+            ah.current_wip: self.cm_df["current_wip"],
+            ah.target_wip: self.cm_df["optimal_wip"],
+            ah.daily_productivity: self.cm_df["productivity"],
+            ah.team_head: self.cm_df["team"],
+            ah.analyst_name: self.cm_df["cm_name"],
+        })
+
+    def build_algorithm_task_df(self) -> pd.DataFrame:
+        # Planned T0 is the initiation date. CDDTask derives initiation as due - 120.
+        planned_t0 = self.case_df["due_date"].fillna(self.as_of_date)
+        return pd.DataFrame({
+            th.task_id: self.case_df["customer_id"],
+            th.due_date: planned_t0 + pd.Timedelta(days=120),
+            th.effort: self.case_df["workload"],
+            th.market: self.config.get("market", ""),
+            th.legal_entity: self.config.get("legal_entity", ""),
+        })
+
+    def build_algorithm_closed_df(self) -> pd.DataFrame:
+        closed = self.history_df[self.history_df["source"].eq("closed")]
+        return pd.DataFrame({
+            ch.ReviewID: closed["review_id"],
+            ch.CustomerNumber: closed["customer_id"],
+            ch.ReviewStatus: "Approval Completed",
+            ch.LatestDcFinalisedById: closed["cm_id"],
+            ch.RmNum: closed["rm_num"],
+            ch.InitiatedDate: closed["history_date"],
+            ch.Segment: "",
+            # The shared allocator requires this column even when groups are unused.
+            mh.MasterGroupCode: "",
+        })
+
+    def build_algorithm_open_df(self) -> pd.DataFrame:
+        opened = self.history_df[self.history_df["source"].eq("open")]
+        return pd.DataFrame({
+            oh.ReviewID: opened["review_id"],
+            oh.CustomerNumber: opened["customer_id"],
+            oh.StaffID: opened["cm_id"],
+            oh.RmNum: opened["rm_num"],
+            oh.InitiatedDate: opened["history_date"],
+            oh.Segment: "",
+            mh.MasterGroupCode: "",
+        })
+
+    def run_proposed_assignment(self, output_result=True) -> pd.DataFrame:
+        """Run the shared allocator with Team code experience from the CM roster only."""
+        allocator = CDDTaskAllocator(
+            df_analysts=self.build_algorithm_analyst_df(),
+            df_tasks=self.build_algorithm_task_df(),
+            df_close=self.build_algorithm_closed_df(),
+            df_open=self.build_algorithm_open_df(),
+            current_date=self.as_of_date,
+            config=self.config.get("algorithm_config", {}),
+        )
+        self.allocator = allocator
+        allocator.read_data()
+        allocator.add_history_customer_to_analyst()
+
+        # Replace any history-derived segment state, including blank segment keys.
+        for row in self.cm_df.itertuples(index=False):
+            analyst = allocator.analysts[row.cm_id]
+            analyst.history_segment = {norm_text(code) for code in row.supported_team_codes if norm_text(code)}
+            analyst.history_segment_reviews.clear()
+        for row in self.case_df.itertuples(index=False):
+            allocator.tasks[row.customer_id].segment = norm_text(row.segment)
+
+        result = allocator.run_top_n_analyst(n=self.config.get("top_n", 3))
+        self.algorithm_result_df = result
+        if result.empty:
+            self.proposed_df = pd.DataFrame(columns=["customer_id", "proposed_cm_id", "proposed_score"])
+            self.warnings.append("Proposed algorithm returns empty result.")
+        else:
+            self.proposed_df = pd.DataFrame({
+                "customer_id": result["Task ID"].apply(lambda value: clean_code(value, strip_zero=True)),
+                "proposed_cm_id": result["Assigned Analyst ID 1"].apply(clean_code),
+                "proposed_score": result["Score Total 1"],
+            })
+        if output_result:
+            output = Path(self.config.get("output_file", "hase_assignment_result.xlsx")).expanduser()
+            if not output.is_absolute():
+                output = Path(self.config_file).parent / output
+            output.parent.mkdir(parents=True, exist_ok=True)
+            result.to_excel(output, index=False)
+        return result
+
+    def derive_open_cm_id(
+        self, df: pd.DataFrame, stage_col: str, assigned_to_user_col: str,
+        user_id_col: str, latest_dc_by_col: str, cm_col: str,
+    ) -> pd.Series:
+        """Use AMH's CM priority, allowing optional source columns to be absent."""
+        cm_id = pd.Series("", index=df.index, dtype=object)
+        for index, row in df.iterrows():
+            if norm_text(row.get(stage_col, "")) in (st.QC, st.APP):
+                # QC/APP assignees are reviewers/approvers, not the handling DC CM.
+                cm_id.loc[index] = clean_code(row.get(latest_dc_by_col, ""))
+                continue
+            assigned = clean_code(row.get(assigned_to_user_col, ""))
+            user = clean_code(row.get(user_id_col, ""))
+            cm_id.loc[index] = (
+                assigned if assigned.isdigit() else user if user.isdigit()
+                else clean_code(row.get(cm_col, ""))
+            )
+        return cm_id
 
 
 # Retain compatibility with the original placeholder class name.
@@ -316,3 +531,5 @@ if __name__ == "__main__":
     self.read_input()
     self.prepare_case_list()
     self.prepare_cm_list()
+    self.prepare_history()
+    self.run_proposed_assignment()

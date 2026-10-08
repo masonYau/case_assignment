@@ -411,7 +411,8 @@ class CDDTaskAllocator:
                 )
                 latest_segment_review = (
                     analyst.history_segment_reviews[task.segment][-1]
-                    if len(task.segment) and analyst_reason[analyst_id].get('segment_affinity') else ''
+                    if len(analyst.history_segment_reviews[task.segment])
+                    and analyst_reason[analyst_id].get('segment_affinity') else ''
                 )
                 task_assign_info.update(
                     {
