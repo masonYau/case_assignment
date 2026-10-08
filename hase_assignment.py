@@ -37,8 +37,11 @@ class DefaultFields:
 
     class CMList:
         cm_id = "Staff ID"
-        cm_name = "CM Name"
-        team = "TL Name"
+        cm_name = "CRT Name"
+        team = "Team"
+        supported_team_codes = "Support RM Segment"
+        mass = "Mass"
+        remark = "Remark"
         current_wip = "Current WIP"
         optimal_wip = "Optimal WIP"
         productivity = "Last 3 month Productivity"
@@ -254,6 +257,56 @@ class HaseAssignment:
             )
         self.case_df = case_df
 
+    def prepare_cm_list(self):
+        """Normalize the HASE CM roster without inferring capacity or availability."""
+        fields = self.config.get("fields", {}).get("cm_list", {})
+        df = self.raw_cm_df.copy()
+        df.columns = [str(column).strip() for column in df.columns]
+
+        def column(key):
+            return fields.get(key, getattr(DefaultFields.CMList, key))
+
+        required = [column(key) for key in ("cm_id", "cm_name", "team", "supported_team_codes")]
+        missing = [name for name in required if name not in df.columns]
+        if missing:
+            raise ValueError(f"cm_list.OCM Segment Mapping missing required columns: {missing}")
+
+        def values(key):
+            name = column(key)
+            return df[name] if name in df.columns else pd.Series("", index=df.index, dtype=object)
+
+        def team_codes(value):
+            # Split only the roster's comma-separated codes, retaining display spelling.
+            return list(dict.fromkeys(code.strip() for code in clean_code(value).split(",") if code.strip()))
+
+        cm_df = pd.DataFrame(index=df.index)
+        cm_df["cm_id"] = values("cm_id").apply(clean_code)
+        cm_df["cm_name"] = values("cm_name").apply(clean_code)
+        cm_df["team"] = values("team").apply(clean_code)
+        cm_df["supported_team_codes"] = values("supported_team_codes").apply(team_codes)
+        cm_df["supported_team_codes_norm"] = cm_df["supported_team_codes"].apply(
+            lambda codes: list(dict.fromkeys(norm_text(code) for code in codes))
+        )
+        cm_df["mass"] = values("mass").apply(norm_text)
+        cm_df["remark"] = values("remark").apply(clean_code)
+
+        # Unlike AMH, the HASE source need not contain capacity metrics. Leave unknown
+        # values as NaN so later WIP/capacity preparation can supply actual values.
+        for key in ("current_wip", "optimal_wip", "productivity"):
+            cm_df[key] = pd.to_numeric(values(key), errors="coerce")
+
+        cm_df = cm_df[cm_df["cm_id"] != ""].drop_duplicates("cm_id", keep="last").reset_index(drop=True)
+        for key in ("current_wip", "optimal_wip", "productivity"):
+            unknown = int(cm_df[key].isna().sum())
+            if unknown:
+                message = (
+                    f"cm_list: {unknown} CM rows have missing or invalid {key}; "
+                    "values remain unknown until WIP/capacity preparation."
+                )
+                if message not in self.warnings:
+                    self.warnings.append(message)
+        self.cm_df = cm_df
+
 
 # Retain compatibility with the original placeholder class name.
 if __name__ == "__main__":
@@ -262,3 +315,4 @@ if __name__ == "__main__":
     self = HaseAssignment(config_file=str(Path(__file__).parent / "hase_data" / "config.json"), current_date=current_date)
     self.read_input()
     self.prepare_case_list()
+    self.prepare_cm_list()
