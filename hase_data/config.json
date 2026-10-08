@@ -1,0 +1,99 @@
+{
+  "as_of_date": "2026-10-07",
+  "market": "Hang Seng",
+  "legal_entity": "HASE",
+  "output_file": "hase_assignment_result.xlsx",
+  "debug": true,
+  "lookback_years": [2, 5],
+  "default_workload": 1.0,
+  "top_n": 3,
+  "closed_completed_only": true,
+  "algorithm_config": {
+    "cus_affinity_weight": 100.0,
+    "rm_affinity_weight": 50.0,
+    "segment_affinity_weight": 100.0,
+    "capacity_weight": 5.0,
+    "overload_penalty": 5.0,
+    "simulate_decay": true
+  },
+  "files": {
+    "business_output": {
+      "path": "hase_sample_corrected.xlsx",
+      "sheet_name": "Case Assignment",
+      "header": 0,
+      "orientation": "records"
+    },
+    "cm_list": {
+      "path": "hase_sample_corrected.xlsx",
+      "sheet_name": "OCM Segment Mapping",
+      "header": 0
+    },
+    "closed_report": [
+      "amh_closed_data.csv",
+      "Closed Reviews 2026.csv",
+      "amh_ntb_completed.csv"
+    ],
+    "open_report": [
+      {
+        "path": "Open Reviews.csv",
+        "header": 0,
+        "orientation": "records"
+      }
+    ]
+  },
+  "fields": {
+    "case_list": {
+      "case_id": "Review ID",
+      "customer": "CIN",
+      "cin": "CIN",
+      "segment": "Team code",
+      "assign_date": "Assign Date",
+      "business_cm_name": "Case manager",
+      "business_team": "CM Team",
+      "designated_ocm": "Designated OCM",
+      "trigger_type": "Trigger type"
+    },
+    "cm_list": {
+      "cm_id": "Staff ID",
+      "cm_name": "CRT Name",
+      "team": "Team",
+      "supported_team_codes": "Support RM Segment",
+      "mass": "Mass",
+      "remark": "Remark"
+    },
+    "closed_report": {
+      "review_id": "Review ID",
+      "customer": "Customer Number",
+      "cm_id": "Latest DC Finalised by ID",
+      "first_claimed_id": "First Claimed ID",
+      "review_status": "Review Status",
+      "completed_status": "Approval Completed",
+      "cancelled_status": "Cancelled",
+      "date_candidates": [
+        "Initiated Date",
+        "Latest DC Finalised Date",
+        "Approval/Cancel Date"
+      ],
+      "rm_num": "RM Num",
+      "segment": "Segment"
+    },
+    "open_report": {
+      "review_id": "Review ID",
+      "customer": "Customer Number",
+      "stage": "Stage",
+      "task_status": "Task Status",
+      "assigned_to_user": "Assigned to User",
+      "user_id": "User ID",
+      "latest_dc_by": "Latest DC Finalised by ID",
+      "cm_id": "Staff ID",
+      "date_candidates": [
+        "Initiated Date",
+        "Latest DC Finalised Date",
+        "Date of latest action",
+        "Stage Claimed Date"
+      ],
+      "rm_num": "RM Num",
+      "segment": "Segment"
+    }
+  }
+}
