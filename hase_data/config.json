@@ -1,8 +1,9 @@
 {
-  "as_of_date": "2026-10-07",
+  "as_of_date": null,
   "market": "Hang Seng",
   "legal_entity": "HASE",
   "output_file": "hase_assignment_result.xlsx",
+  "filled_output_file": "hase_business_output_assigned.xlsx",
   "debug": true,
   "lookback_years": [2, 5],
   "default_workload": 1.0,
@@ -16,7 +17,7 @@
   "algorithm_config": {
     "cus_affinity_weight": 100.0,
     "rm_affinity_weight": 50.0,
-    "segment_affinity_weight": 100.0,
+    "segment_affinity_weight": 10000.0,
     "capacity_weight": 5.0,
     "overload_penalty": 5.0,
     "simulate_decay": true
@@ -34,9 +35,9 @@
       "header": 0
     },
     "closed_report": [
-      "amh_closed_data.csv",
+      "hase_closed_data.csv",
       "Closed Reviews 2026.csv",
-      "amh_ntb_completed.csv"
+      "hase_ntb_completed.csv"
     ],
     "open_report": [
       {
