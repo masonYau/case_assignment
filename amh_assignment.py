@@ -561,7 +561,7 @@ class AmhAssignment:
             analyst_df["Optimal WIP"].quantile(0.1)
         )
         analyst_df["Last 3 month Productivity"] = analyst_df["Last 3 month Productivity"].apply(lambda x: min(x, 1))
-        ori_anniversary = task_df['Anniversary Date'].copy()
+        ori_anniversary = task_df.set_index('Customer Number')['Anniversary Date'].copy()
         task_df['Anniversary Date'] = task_df['Anniversary Date'].mask(
             ~task_df['Mastergroup Code'].eq(''), task_df['Anniversary Date'].min())
 
@@ -578,8 +578,8 @@ class AmhAssignment:
         allocator.add_history_customer_to_analyst()
         res_df = allocator.run_top_n_analyst(n=self.config.get("top_n", 3))
         res_df = self.add_algorithm_output_group_fields(res_df)
-        res_df['Due Date'] = ori_anniversary
-        res_df['Init Date'] = ori_anniversary - pd.Timedelta(days=120)
+        res_df['Due Date'] = res_df['Customer'].map(ori_anniversary)
+        res_df['Init Date'] = res_df['Due Date'] - pd.Timedelta(days=120)
 
         if output_result:
             res_df.to_excel(f"AMH ETB Assign Result {self.as_of_date.date()}.xlsx", index=False)

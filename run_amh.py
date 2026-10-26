@@ -9,6 +9,7 @@ import shutil
 from log import setup_log
 import json
 import datetime
+import traceback
 
 def download_qlik_sense_report(config, current_date):
     settings = Settings(config)
@@ -49,27 +50,30 @@ def download_qlik_sense_report(config, current_date):
         conn.close()
 
 setup_log("./")
+try:
+    if os.path.isfile('config.json'):
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+    if config['as_of_date'] is not None:
+        current_date = config['as_of_date']
+    else:
+        current_date = str(datetime.datetime.now().date())
 
-if os.path.isfile('config.json'):
-    with open('config.json', 'r') as f:
-        config = json.load(f)
-if config['as_of_date'] is not None:
-    current_date = config['as_of_date']
-else:
-    current_date = str(datetime.datetime.now().date())
+    logging.info(f"Current Date is: {current_date}")
 
-logging.info(f"Current Date is: {current_date}")
+    if os.path.isfile('qlik_config.json'):
+        with open('qlik_config.json', 'r') as f:
+            qlik_config = json.load(f)
+    logging.info(f"Loaded Qlik Config: {qlik_config}")
+    download_qlik_sense_report(qlik_config, current_date)
 
-if os.path.isfile('qlik_config.json'):
-    with open('qlik_config.json', 'r') as f:
-        qlik_config = json.load(f)
-logging.info(f"Loaded Qlik Config: {qlik_config}")
-download_qlik_sense_report(qlik_config, current_date)
-
-assignment = AmhAssignment('config.json', current_date)
-assignment.read_input()
-assignment.prepare_case_list()
-assignment.prepare_cm_list()
-assignment.prepare_group_mapping()
-assignment.prepare_history()
-assignment.run_proposed_assignment()
+    assignment = AmhAssignment('config.json', current_date)
+    assignment.read_input()
+    assignment.prepare_case_list()
+    assignment.prepare_cm_list()
+    assignment.prepare_group_mapping()
+    assignment.prepare_history()
+    assignment.run_proposed_assignment()
+except Exception:
+    logging.error("Error Info:\n%s", traceback.format_exc())
+    raise

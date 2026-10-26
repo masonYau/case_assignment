@@ -18,7 +18,7 @@ from header import MasterGroupHeader as mh
 from header import OpenReviewHeader as oh
 from header import StageType as st
 from header import TaskHeader as th
-
+import logging
 
 class DefaultFields:
     class CaseList:
@@ -44,6 +44,7 @@ class DefaultFields:
         cm_name = "CRT Name"
         team = "Team"
         supported_team_codes = "Support RM Segment"
+        fte = "Effective FTE"
         mass = "Mass"
         remark = "Remark"
         current_wip = "Current WIP"
@@ -121,6 +122,7 @@ def read_table(file_config, default_sheet=None, base_dir=None) -> pd.DataFrame:
         sheet_name = file_config.get("sheet_name", default_sheet)
         header = file_config.get("header", 0)
 
+    logging.info(f"Reading File {path} Sheet {sheet_name} Header {header}")
     path = Path(path).expanduser()
     if not path.is_absolute():
         path = (Path(base_dir) if base_dir is not None else Path.cwd()) / path
@@ -179,14 +181,19 @@ class HaseAssignment:
         self.history_df = pd.DataFrame()
         self.proposed_df = pd.DataFrame()
         self.case_detail_df = pd.DataFrame()
+        self.algorithm_result_df = pd.DataFrame()
 
     def read_input(self):
         """Load HASE raw inputs without cleaning, deduplication or allocation."""
         files = self.config["files"]
         base_dir = Path(self.config_file).expanduser().resolve().parent
+        logging.info(f"Reading Business Case List")
         raw_case_df = read_table(files["business_output"], default_sheet="Case Assignment", base_dir=base_dir)
+        logging.info(f"Reading Business CM List")
         raw_cm_df = read_table(files["cm_list"], default_sheet="OCM Segment Mapping", base_dir=base_dir)
+        logging.info(f"Reading Close Report")
         raw_closed_df = read_many(files["closed_report"], base_dir=base_dir)
+        logging.info(f"Reading Open Report")
         raw_open_df = read_many(
             files["open_report"],
             fields_as_rows_markers=["Customer Number", "Review ID", "Stage", "Assigned to User"],
@@ -287,6 +294,7 @@ class HaseAssignment:
         cm_df["cm_id"] = values("cm_id").apply(clean_code)
         cm_df["cm_name"] = values("cm_name").apply(clean_code)
         cm_df["team"] = values("team").apply(clean_code)
+        cm_df["fte"] = values("fte").astype(float).fillna((1.0))
         cm_df["supported_team_codes"] = values("supported_team_codes").apply(team_codes)
         cm_df["supported_team_codes_norm"] = cm_df["supported_team_codes"].apply(
             lambda codes: list(dict.fromkeys(norm_text(code) for code in codes))
@@ -295,7 +303,7 @@ class HaseAssignment:
         cm_df["remark"] = values("remark").apply(clean_code)
 
         defaults = self.config.get("cm_defaults", {})
-        for key in ("current_wip", "optimal_wip", "productivity"):
+        for key in ("current_wip","optimal_wip", "productivity"):
             value = defaults.get(key)
             if isinstance(value, bool):
                 raise ValueError(f"cm_defaults.{key} must be a finite non-negative number")
@@ -308,6 +316,10 @@ class HaseAssignment:
             cm_df[key] = value
 
         cm_df = cm_df[cm_df["cm_id"] != ""].drop_duplicates("cm_id", keep="last").reset_index(drop=True)
+        cm_df = cm_df[cm_df["fte"] >= 1e-4]
+        to_be_assigned = (len(self.case_df) / len(cm_df)) * cm_df["fte"]
+        cm_df["current_wip"] = cm_df["optimal_wip"] - to_be_assigned
+
         self.cm_df = cm_df
 
     def prepare_history(self) -> pd.DataFrame:
@@ -472,6 +484,7 @@ class HaseAssignment:
         df_tasks = self.build_algorithm_task_df()
         df_close = self.build_algorithm_closed_df()
         df_open = self.build_algorithm_open_df()
+        logging.info("Start running assignment algorithm")
         allocator = CDDTaskAllocator(
             df_analysts=df_analysts,
             df_tasks=df_tasks,
@@ -492,8 +505,26 @@ class HaseAssignment:
         for row in self.case_df.itertuples(index=False):
             allocator.tasks[row.customer_id].segment = norm_text(row.segment)
 
+        max_due_date_gap = df_tasks[th.due_date].max() - df_tasks[th.due_date].min()
+        all_history_segment = set()
+        for i, analyst in allocator.analysts.items():
+            all_history_segment = all_history_segment.union(analyst.history_segment)
+        adjust_due_date_task = set()
+        for i, task in allocator.tasks.items():
+            if task.segment not in all_history_segment:
+                task.init_date = task.init_date + max_due_date_gap
+                task.due_date = task.due_date + max_due_date_gap
+                adjust_due_date_task.add(i)
+
         result = allocator.run_top_n_analyst(n=self.config.get("top_n", 3))
+        result['Init Date'] = result['Init Date'].mask(
+            result['Task ID'].isin(adjust_due_date_task), result['Init Date'] - max_due_date_gap
+        )
+        result['Due Date'] = result['Due Date'].mask(
+            result['Task ID'].isin(adjust_due_date_task), result['Due Date'] - max_due_date_gap
+        )
         self.algorithm_result_df = result
+        logging.info("obtained assignment algorithm result")
         if result.empty:
             self.proposed_df = pd.DataFrame(columns=["customer_id", "proposed_cm_id", "proposed_score"])
             self.warnings.append("Proposed algorithm returns empty result.")
@@ -509,6 +540,7 @@ class HaseAssignment:
             if not output.is_absolute():
                 output = Path(self.config_file).parent / output
             output.parent.mkdir(parents=True, exist_ok=True)
+            logging.info(f'writing assign detail file {output}')
             result.to_excel(output, index=False)
             self.export_assignment_workbook()
         return result
@@ -625,6 +657,7 @@ class HaseAssignment:
             xml = re.sub(rf'<{tag}row\b[^>]*>.*?</{tag}row>', patch_row, xml, flags=re.DOTALL)
             if patches:
                 raise ValueError(f"Could not locate worksheet rows for assignment: {sorted(patches)}")
+            logging.info(f'writing business output file {output}')
             output.parent.mkdir(parents=True, exist_ok=True)
             with ZipFile(output, "w") as destination:
                 destination.comment = archive.comment
@@ -663,4 +696,3 @@ if __name__ == "__main__":
     self.prepare_cm_list()
     self.prepare_history()
     self.run_proposed_assignment()
-    self.export_assignment_workbook()

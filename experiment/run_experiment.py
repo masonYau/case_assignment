@@ -40,7 +40,7 @@ class DefaultFields:
     class CMList:
         cm_id = "Staff ID"
         cm_name = "CM Name"
-        team = "Team"
+        team = "TL Name"
         current_wip = "Current WIP"
         optimal_wip = "Optimal WIP"
         productivity = "Last 3 month Productivity"
@@ -52,7 +52,7 @@ class DefaultFields:
         customer_name = "Customer_Name"
 
     class IMIS:
-        customer = "Real customer id"
+        customer = "ITL_CUST_NUM"
         imis_id = "IMIS Group No"
         imis_name = "Group Name"
 
@@ -397,7 +397,7 @@ class AssignmentExperiment:
 
     def add_group_key(self, df: pd.DataFrame) -> pd.DataFrame:
         use_imis_for_bbrm = self.config.get("use_imis_as_group_for_bbrm", True)
-        is_bbrm = df["segment_norm"].eq("BBRM")
+        is_bbrm = df["segment_norm"].isin({"BBRM", 'BUSINESS BANKING - UPPER'})
         df["group_type"] = ""
         df["group_id"] = ""
         df.loc[df["mg_id"].ne(""), "group_type"] = "MG"
@@ -419,6 +419,7 @@ class AssignmentExperiment:
         history_df = history_df[history_df["history_date"] <= self.as_of_date].copy()
         history_df = self.add_group_key(history_df)
         self.history_df = history_df
+
 
     def prepare_closed_history(self) -> pd.DataFrame:
         fields = get_nested(self.config, ["fields", "closed_report"], {})
@@ -551,7 +552,18 @@ class AssignmentExperiment:
         task_df = self.build_algorithm_task_df()
         close_df = self.build_algorithm_closed_df()
         open_df = self.build_algorithm_open_df()
+        analyst_df["Optimal WIP"] = analyst_df["Optimal WIP"].mask(
+            analyst_df["Optimal WIP"] >= analyst_df["Optimal WIP"].quantile(0.75),
+            analyst_df["Optimal WIP"].quantile(0.75)
+        )
+        analyst_df["Optimal WIP"] = analyst_df["Optimal WIP"].mask(
+            analyst_df["Optimal WIP"] <= analyst_df["Optimal WIP"].quantile(0.1),
+            analyst_df["Optimal WIP"].quantile(0.1)
+        )
         analyst_df["Last 3 month Productivity"] = analyst_df["Last 3 month Productivity"].apply(lambda x: min(x, 1))
+        ori_anniversary = task_df['Anniversary Date'].copy()
+        task_df['Anniversary Date'] = task_df['Anniversary Date'].mask(
+            ~task_df['Mastergroup Code'].eq(''), task_df['Anniversary Date'].min())
 
         allocator = CDDTaskAllocator(
             df_analysts=analyst_df,
@@ -561,10 +573,13 @@ class AssignmentExperiment:
             current_date=self.as_of_date,
             config=self.config.get("algorithm_config", {}),
         )
+        self.allocator = allocator
         allocator.read_data()
         allocator.add_history_customer_to_analyst()
         res_df = allocator.run_top_n_analyst(n=self.config.get("top_n", 3))
         res_df = self.add_algorithm_output_group_fields(res_df)
+        res_df['Due Date'] = ori_anniversary
+        res_df['Init Date'] = ori_anniversary - pd.Timedelta(days=120)
 
         if output_result:
             res_df.to_excel(f"AMH ETB Assign Result {self.as_of_date.date()}.xlsx", index=False)
@@ -594,6 +609,8 @@ class AssignmentExperiment:
             ah.current_wip: self.cm_df["current_wip"],
             ah.target_wip: self.cm_df["optimal_wip"],
             ah.daily_productivity: self.cm_df["productivity"],
+            ah.team_head: self.cm_df['team'],
+            ah.analyst_name: self.cm_df['cm_name']
         })
 
     def build_algorithm_task_df(self) -> pd.DataFrame:
@@ -617,24 +634,28 @@ class AssignmentExperiment:
     def build_algorithm_closed_df(self) -> pd.DataFrame:
         closed = self.history_df[self.history_df["source"].eq("closed")].copy()
         return pd.DataFrame({
+            ch.ReviewID: closed["review_id"],
             ch.CustomerNumber: closed["customer_id"],
             ch.ReviewStatus: "Approval Completed",
             ch.LatestDcFinalisedById: closed["cm_id"],
             ch.RmNum: closed["rm_num"],
             ch.InitiatedDate: closed["history_date"],
             ch.Segment: closed["segment"],
-            mh.MasterGroupCode: closed["group_id"],
+            mh.MasterGroupCode: closed["mg_id"],
+            mh.IMISId: closed["imis_id"],
         })
 
     def build_algorithm_open_df(self) -> pd.DataFrame:
         open_df = self.history_df[self.history_df["source"].eq("open")].copy()
         return pd.DataFrame({
+            oh.ReviewID: open_df["review_id"],
             oh.CustomerNumber: open_df["customer_id"],
             oh.StaffID: open_df["cm_id"],
             oh.RmNum: open_df["rm_num"],
             oh.InitiatedDate: open_df["history_date"],
             ch.Segment: open_df["segment"],
-            mh.MasterGroupCode: open_df["group_id"],
+            mh.MasterGroupCode: open_df["mg_id"],
+            mh.IMISId: open_df["imis_id"],
         })
 
     def build_case_detail(self):
@@ -654,23 +675,36 @@ class AssignmentExperiment:
         self.case_detail_df = df
 
     def case_output_group_fields(self) -> pd.DataFrame:
-        df = self.case_df[["customer_id", "mg_id", "mg_name", "imis_id", "imis_name"]].copy()
+        df = self.case_df[["customer_id", "mg_id", "mg_name", "imis_id", "imis_name", "group_type", "group_id"]].copy()
         df["Master Group ID"] = df["mg_id"].fillna("")
         df["Master Group"] = df["mg_name"].fillna("")
         df["IMIS Group No"] = df["imis_id"].fillna("")
         df["IMIS Group"] = df["imis_name"].fillna("")
+        df["Combine Group"] = df["group_id"].fillna("")
         df["WIP Master Group CM"] = self.wip_group_cm_values(df)
-        return df[["customer_id", "Master Group ID", "Master Group", "IMIS Group No", "IMIS Group", "WIP Master Group CM"]]
+        df["WIP Master Group CM"] = df["WIP Master Group CM"].where(
+            df["WIP Master Group CM"].isin(self.cm_df['cm_id'].to_list()), ""
+        )
+        df["WIP Master Group CM Name"] = df["WIP Master Group CM"].map(
+            self.cm_df.set_index("cm_id")["cm_name"].to_dict()
+        )
+        return df[["customer_id", "Master Group ID", "Master Group", "IMIS Group No", "IMIS Group", "Combine Group",
+                   "WIP Master Group CM", "WIP Master Group CM Name"]]
 
     def wip_group_cm_values(self, df: pd.DataFrame) -> pd.Series:
         lookup = self.build_wip_group_cm_lookup()
 
         def find_wip_cm(row):
             matches = []
-            for group_type, group_id_col in [("mg", "mg_id"), ("imis", "imis_id")]:
-                group_id = row.get(group_id_col, "")
-                if group_id:
-                    matches.extend(lookup[group_type].get(group_id, []))
+
+            group_type = row.get("group_type", "")
+            if group_type == 'MG':
+                group_id = row.get("mg_id", "")
+                matches.extend(lookup["mg"].get(group_id, []))
+            elif group_type == 'IMIS':
+                group_id = row.get("imis_id", "")
+                matches.extend(lookup["imis"].get(group_id, []))
+
             return self.join_unique_values(matches)
 
         return df.apply(find_wip_cm, axis=1)
@@ -683,7 +717,7 @@ class AssignmentExperiment:
         open_wip = self.open_history_df.copy()
         open_wip = open_wip[open_wip["history_date"].notna()].copy()
         open_wip = open_wip[open_wip["history_date"] <= self.as_of_date].copy()
-        open_wip = self.filter_open_wip_cases(open_wip)
+        # open_wip = self.filter_open_wip_cases(open_wip)
         if open_wip.empty:
             return empty_lookup
 
@@ -699,12 +733,6 @@ class AssignmentExperiment:
 
     def filter_open_wip_cases(self, open_df: pd.DataFrame) -> pd.DataFrame:
         df = open_df.copy()
-        if "task_status" in df.columns:
-            task_status_norm = df["task_status"].apply(norm_text)
-            if task_status_norm.ne("").any():
-                wip_statuses = {norm_text(v) for v in as_list(self.config.get("open_report_wip_statuses", ["WIP"]))}
-                df = df[task_status_norm.isin(wip_statuses)].copy()
-
         if "stage" in df.columns:
             stage_norm = df["stage"].apply(norm_text)
             approval_stages = {
@@ -724,12 +752,13 @@ class AssignmentExperiment:
         return display.fillna("").astype(str).str.strip()
 
     def latest_wip_cm_by_group(self, open_wip: pd.DataFrame, group_col: str) -> dict:
+        open_wip = open_wip[open_wip["cm_id"].isin(self.cm_df['cm_id'].to_list())]
         grouped = open_wip[open_wip[group_col].ne("")].copy()
         if grouped.empty:
             return {}
         grouped = grouped.sort_values("history_date", ascending=False)
         latest = grouped.drop_duplicates(group_col, keep="first")
-        return latest.set_index(group_col)["wip_cm_display"].apply(lambda value: [value]).to_dict()
+        return latest.set_index(group_col)["cm_id"].apply(lambda value: [value]).to_dict()
 
     def add_cm_info(self, df: pd.DataFrame, cm_col: str, prefix: str) -> pd.DataFrame:
         cm_info = self.cm_df[["cm_id", "cm_name", "team"]].copy()
@@ -1180,4 +1209,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    self = AssignmentExperiment("config.json")
+    self.read_input()
+    self.prepare_case_list()
+    self.prepare_cm_list()
+    self.prepare_group_mapping()
+    self.prepare_history()
+    self.run_proposed_assignment()

@@ -9,6 +9,7 @@ import shutil
 from log import setup_log
 import json
 import datetime
+import traceback
 
 
 def download_qlik_sense_report(config, current_date):
@@ -49,28 +50,32 @@ def download_qlik_sense_report(config, current_date):
     finally:
         conn.close()
 
+
 setup_log("./")
+try:
+    if os.path.isfile('config.json'):
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+    if config['as_of_date'] is not None:
+        current_date = config['as_of_date']
+    else:
+        current_date = str(datetime.datetime.now().date())
 
-if os.path.isfile('config.json'):
-    with open('config.json', 'r') as f:
-        config = json.load(f)
-if config['as_of_date'] is not None:
-    current_date = config['as_of_date']
-else:
-    current_date = str(datetime.datetime.now().date())
+    logging.info(f"Current Date is: {current_date}")
 
-logging.info(f"Current Date is: {current_date}")
+    if os.path.isfile('qlik_config.json'):
+        with open('qlik_config.json', 'r') as f:
+            qlik_config = json.load(f)
+    logging.info(f"Loaded Qlik Config: {qlik_config}")
+    download_qlik_sense_report(qlik_config, current_date)
 
-if os.path.isfile('qlik_config.json'):
-    with open('qlik_config.json', 'r') as f:
-        qlik_config = json.load(f)
-logging.info(f"Loaded Qlik Config: {qlik_config}")
-download_qlik_sense_report(qlik_config, current_date)
-
-self = HaseAssignment('config.json', current_date)
-self.read_input()
-self.prepare_case_list()
-self.prepare_cm_list()
-self.prepare_history()
-self.run_proposed_assignment()
-self.export_assignment_workbook()
+    self = HaseAssignment('config.json', current_date)
+    self.read_input()
+    self.prepare_case_list()
+    self.prepare_cm_list()
+    self.prepare_history()
+    self.run_proposed_assignment()
+    logging.info("finish all!")
+except Exception:
+    logging.error("Error Info:\n%s", traceback.format_exc())
+    raise

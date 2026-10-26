@@ -10,13 +10,13 @@
   "cm_defaults": {
     "current_wip": 60,
     "optimal_wip": 60,
-    "productivity": 1.1
+    "productivity": 0
   },
   "top_n": 3,
   "closed_completed_only": true,
   "algorithm_config": {
-    "cus_affinity_weight": 100.0,
-    "rm_affinity_weight": 50.0,
+    "cus_affinity_weight": 10.0,
+    "rm_affinity_weight": 5.0,
     "segment_affinity_weight": 10000.0,
     "capacity_weight": 5.0,
     "overload_penalty": 5.0,
@@ -24,13 +24,13 @@
   },
   "files": {
     "business_output": {
-      "path": "hase_sample_corrected.xlsx",
+      "path": "case to assigned.xlsx",
       "sheet_name": "Case Assignment",
       "header": 0,
       "orientation": "records"
     },
     "cm_list": {
-      "path": "hase_sample_corrected.xlsx",
+      "path": "case to assigned.xlsx",
       "sheet_name": "OCM Segment Mapping",
       "header": 0
     },
@@ -63,6 +63,7 @@
       "cm_id": "Staff ID",
       "cm_name": "CRT Name",
       "team": "Team",
+      "fte": "Effective FTE",
       "supported_team_codes": "Support RM Segment",
       "mass": "Mass",
       "remark": "Remark"
