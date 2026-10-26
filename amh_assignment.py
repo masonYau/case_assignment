@@ -1,9 +1,14 @@
 import argparse
 import json
 import logging
+import posixpath
+import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
+from xml.sax.saxutils import escape
+from zipfile import ZipFile
 
 import numpy as np
 import pandas as pd
@@ -248,9 +253,18 @@ class AmhAssignment:
 
         case_id_col = get_col(fields, "case_id", DefaultFields.CaseList.case_id)
         if orientation == "fields_as_rows" or (
-                orientation == "auto" and case_id_col not in df.columns and df.shape[1] > 1
-                and case_id_col in df.iloc[:, 0].astype(str).to_list()
+                orientation == "auto" and df.shape[1] > 1
+                and ((case_id_col not in df.columns and case_id_col in df.iloc[:, 0].astype(str).to_list())
+                     or (str(df.columns[0]).strip() == case_id_col
+                         and get_col(fields, "customer", DefaultFields.CaseList.customer) not in df.columns))
         ):
+            # The first field may have been consumed as the pandas header.
+            if str(df.columns[0]).strip() == case_id_col:
+                source_config = self.config["files"]["business_output"]
+                source_config = {"path": source_config} if isinstance(source_config, str) else dict(source_config)
+                source_header = source_config.get("header", 0)
+                source_config["header"] = None
+                df = read_table(source_config, default_sheet="CMAssignmentFullList").iloc[source_header:]
             df = normalize_fields_as_rows(df)
 
         customer_col = get_col(fields, "customer", DefaultFields.CaseList.customer)
@@ -583,6 +597,7 @@ class AmhAssignment:
 
         if output_result:
             res_df.to_excel(f"AMH ETB Assign Result {self.as_of_date.date()}.xlsx", index=False)
+            self.export_assignment_workbook(res_df)
 
         if res_df.empty:
             self.proposed_df = pd.DataFrame(columns=["customer_id", "proposed_cm_id"])
@@ -594,6 +609,132 @@ class AmhAssignment:
             "proposed_cm_id": res_df["Assigned Analyst ID 1"].apply(clean_staff),
             "proposed_score": res_df.get("Score Total 1", np.nan),
         })
+
+    def export_assignment_workbook(self, results: pd.DataFrame) -> Path:
+        """Copy the input workbook, changing only the first-choice CM/TH cells."""
+        file_config = self.config["files"]["business_output"]
+        if isinstance(file_config, str):
+            file_config = {"path": file_config}
+        source = resolve_working_path(file_config["path"])
+        if source.suffix.lower() not in {".xlsx", ".xlsm"}:
+            raise ValueError("Assignment workbook export requires an .xlsx or .xlsm input")
+        output = resolve_working_path(self.config.get(
+            "filled_output_file", str(source.with_name(
+                f"{source.stem}_assigned_{self.as_of_date:%Y-%m-%d}{source.suffix}"))))
+        if output.resolve() == source.resolve():
+            raise ValueError("Filled output cannot overwrite business_output")
+        if output.suffix.lower() != source.suffix.lower():
+            raise ValueError("Filled output must use the same extension as business_output")
+        header = file_config.get("header", 0)
+        if not isinstance(header, int) or header < 0:
+            raise ValueError("Assignment workbook export requires a non-negative integer header")
+        fields = get_nested(self.config, ["fields", "case_list"], {})
+        customer_field = get_col(fields, "customer", DefaultFields.CaseList.customer)
+        targets = [get_col(fields, "business_team", DefaultFields.CaseList.business_team),
+                   get_col(fields, "business_cm_name", DefaultFields.CaseList.business_cm_name)]
+        by_customer = {}
+        cms = {clean_staff(row["cm_id"]): row for _, row in self.cm_df.iterrows()}
+        for _, result in results.iterrows():
+            customer = clean_customer(result["Task ID"])
+            cm_id = clean_staff(result["Assigned Analyst ID 1"])
+            if not customer or not cm_id:
+                continue
+            if cm_id not in cms:
+                raise ValueError(f"Assigned CM is absent from cm_list: {cm_id}")
+            values = [cms[cm_id]["team"], cms[cm_id]["cm_name"]]
+            if customer in by_customer and by_customer[customer] != values:
+                raise ValueError(f"Conflicting assignments for customer: {customer}")
+            by_customer[customer] = values
+
+        ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        relation_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        with ZipFile(source) as archive:
+            sheets = ET.fromstring(archive.read("xl/workbook.xml")).findall("s:sheets/s:sheet", ns)
+            sheet_name = file_config.get("sheet_name", "CMAssignmentFullList")
+            sheet = sheets[sheet_name] if isinstance(sheet_name, int) else next(
+                s for s in sheets if s.attrib["name"] == sheet_name)
+            relation = sheet.attrib[f"{{{relation_ns}}}id"]
+            relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            target = next(r.attrib["Target"] for r in relationships if r.attrib["Id"] == relation)
+            sheet_path = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join("xl", target))
+            shared = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                shared = ["".join(t.itertext()) for t in
+                          ET.fromstring(archive.read("xl/sharedStrings.xml")).findall("s:si", ns)]
+            xml = archive.read(sheet_path).decode("utf-8")
+            root = ET.fromstring(xml)
+            cells = {}
+            for cell in root.findall("s:sheetData/s:row/s:c", ns):
+                value = cell.find("s:v", ns)
+                text = value.text if value is not None else ""
+                if cell.get("t") == "s":
+                    text = shared[int(text)]
+                elif cell.get("t") == "inlineStr":
+                    text = "".join(t.text or "" for t in cell.findall(".//s:t", ns))
+                cells[cell.attrib["r"]] = text or ""
+            header_row = header + 1
+            columns = {value.strip(): re.sub(r"\d", "", address) for address, value in cells.items()
+                       if int(re.sub(r"\D", "", address)) == header_row}
+            orientation = file_config.get("orientation", "auto")
+            transposed = orientation == "fields_as_rows" or (
+                orientation == "auto" and customer_field not in columns)
+            patches = {}
+            if transposed:
+                rows = {value.strip(): int(address[1:]) for address, value in cells.items() if re.fullmatch(r"A\d+", address)}
+                missing = [name for name in [customer_field, *targets] if name not in rows]
+                if missing:
+                    raise ValueError(f"business_output missing assignment fields: {missing}")
+                for address, customer in cells.items():
+                    column = re.sub(r"\d", "", address)
+                    if column != "A" and int(re.sub(r"\D", "", address)) == rows[customer_field]:
+                        for name, value in zip(targets, by_customer.get(clean_customer(customer), [])):
+                            patches[f"{column}{rows[name]}"] = value
+            else:
+                missing = [name for name in [customer_field, *targets] if name not in columns]
+                if missing:
+                    raise ValueError(f"business_output missing assignment fields: {missing}")
+                for address, customer in cells.items():
+                    row = int(re.sub(r"\D", "", address))
+                    if row > header_row and re.sub(r"\d", "", address) == columns[customer_field]:
+                        for name, value in zip(targets, by_customer.get(clean_customer(customer), [])):
+                            patches[f"{columns[name]}{row}"] = value
+
+            prefix = re.search(r'<((?:[\w.-]+:)?)worksheet\b', xml).group(1)
+            tag = re.escape(prefix)
+            by_row = {}
+            for address, value in patches.items():
+                by_row.setdefault(int(re.sub(r"\D", "", address)), {})[address] = value
+
+            def patch_row(match):
+                row_xml = match.group(0)
+                row_number = int(re.search(r'\br="(\d+)"', row_xml).group(1))
+                for address, value in by_row.pop(row_number, {}).items():
+                    old = re.search(rf'<{tag}c\b[^>]*\br="{address}"[^>]*?(?:/>|>.*?</{tag}c>)', row_xml, re.DOTALL)
+                    attributes = re.match(rf'<{tag}c\b([^>]*?)(?:/?>)', old.group(0)).group(1) if old else f' r="{address}"'
+                    attributes = re.sub(r'\s+t="[^"]*"', '', attributes)
+                    text = "" if pd.isna(value) else str(value)
+                    new = f'<{prefix}c{attributes} t="inlineStr"><{prefix}is><{prefix}t xml:space="preserve">{escape(text)}</{prefix}t></{prefix}is></{prefix}c>'
+                    if old:
+                        row_xml = row_xml[:old.start()] + new + row_xml[old.end():]
+                    else:
+                        column = re.sub(r"\d", "", address)
+                        following = next((c for c in re.finditer(rf'<{tag}c\b[^>]*\br="([A-Z]+)\d+"', row_xml)
+                                          if (len(c.group(1)), c.group(1)) > (len(column), column)), None)
+                        offset = following.start() if following else row_xml.rfind(f"</{prefix}row>")
+                        row_xml = row_xml[:offset] + new + row_xml[offset:]
+                return row_xml
+
+            xml = re.sub(rf'<{tag}row\b[^>]*?(?:/>|>.*?</{tag}row>)', patch_row, xml, flags=re.DOTALL)
+            if by_row:
+                raise ValueError(f"Could not locate worksheet rows for assignment: {sorted(by_row)}")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with ZipFile(output, "w") as destination:
+                destination.comment = archive.comment
+                for entry in archive.infolist():
+                    destination.writestr(entry, xml.encode("utf-8") if entry.filename == sheet_path else archive.read(entry.filename))
+        self.filled_output_path = output
+        logging.info("Assignment case list copy written to: %s", output)
+        return output
 
     def add_algorithm_output_group_fields(self, res_df: pd.DataFrame) -> pd.DataFrame:
         if res_df.empty:
