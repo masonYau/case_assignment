@@ -42,7 +42,7 @@
     ],
     "open_report": [
       {
-        "path": "OpenReviews_CMB_20260720.csv",
+        "path": "OpenReviews_CMB_20260826.csv",
         "header": 0,
         "orientation": "records"
       }
@@ -89,7 +89,7 @@
       "mg_name": "Master_Group_Name"
     },
     "bb_rm_imis_group": {
-      "customer": "Real customer id",
+      "customer": "ITL_CUST_NUM",
       "imis_id": "IMIS Group No",
       "imis_name": "Group Name"
     },
