@@ -52,7 +52,7 @@ class DefaultFields:
 
     class HorisMG:
         cin = "CIN"
-        mg_id = "Master_Group_ID"
+        mg_id = "Mastergroup Code"
         mg_name = "Master_Group_Name"
         customer_name = "Customer_Name"
 
@@ -72,6 +72,7 @@ class DefaultFields:
         date_candidates = ["Latest DC Finalised Date", "Approval/Cancel Date", "Initiated Date"]
         rm_num = "RM Num"
         segment = "Segment"
+        legal_entity = "Legal Entity"
 
     class Open:
         review_id = "Review ID"
@@ -85,6 +86,7 @@ class DefaultFields:
         date_candidates = ["Initiated Date", "DC Finalized Date", "Date of latest action", "Stage Start Date"]
         rm_num = "RM Num"
         segment = "Segment"
+        legal_entity = "Legal Entity"
 
 
 def read_json(json_file: str) -> dict:
@@ -438,6 +440,7 @@ class AmhAssignment:
     def prepare_closed_history(self) -> pd.DataFrame:
         fields = get_nested(self.config, ["fields", "closed_report"], {})
         df = self.raw_closed_df.copy()
+        df = df[df[DefaultFields.Closed.legal_entity] == "HK-HSBC"]
 
         review_id_col = get_col(fields, "review_id", DefaultFields.Closed.review_id)
         customer_col = get_col(fields, "customer", DefaultFields.Closed.customer)
@@ -478,6 +481,7 @@ class AmhAssignment:
     def prepare_open_history(self) -> pd.DataFrame:
         fields = get_nested(self.config, ["fields", "open_report"], {})
         df = self.raw_open_df.copy()
+        df = df[df[DefaultFields.Open.legal_entity] == "HK-HSBC"]
 
         review_id_col = get_col(fields, "review_id", DefaultFields.Open.review_id)
         customer_col = get_col(fields, "customer", DefaultFields.Open.customer)

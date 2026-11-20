@@ -48,6 +48,7 @@ class CDDTaskAllocator:
             'rm_affinity_weight': 50.0,
             'segment_affinity_weight': 100.0,
             'wip_batch_group_affinity_weight': 300.0,
+            'latest_wip_batch_group_weight': 100.0,
             'capacity_weight': 5.0,
             'overload_penalty': 5.0,
             'simulate_decay': True
@@ -65,6 +66,8 @@ class CDDTaskAllocator:
         self.out_dir = None
         self.analyst_out_dir = None
         self.cm_statistics = dict()
+        self.mg_latest_analyst = {}
+        self.mg_latest_init = {}
 
     def read_data(self):
         self.analysts = {str(row[ah.analyst_id]): Analyst(row) for _, row in self.df_analysts.iterrows()}
@@ -116,6 +119,7 @@ class CDDTaskAllocator:
         open_df[oh.StaffID] = open_df[oh.StaffID].apply(self._clean_staff)
         open_df[mh.MasterGroupCode] = open_df[mh.MasterGroupCode].apply(self._clean_group)
         open_df = open_df[open_df[oh.StaffID] != ""]
+        open_df = open_df.sort_values(by=oh.InitiatedDate)
 
         for analyst, sub_df in open_df.groupby(oh.StaffID):
             if analyst in self.analysts:
@@ -132,6 +136,21 @@ class CDDTaskAllocator:
                     if mh.IMISId in row.index and row[mh.IMISId] not in {'', '-'}:
                         self.analysts[analyst].wip_mgs_reviews[row[mh.IMISId]].append(row[oh.ReviewID])
 
+        review_init = open_df.set_index(oh.ReviewID)[oh.InitiatedDate]
+        mg_latest_analyst = {}
+        mg_latest_init = {}
+        zero_time = pd.to_datetime('1900-01-01')
+        for analyst_id, analyst in self.analysts.items():
+            analyst_latest_mg_init = {
+                mg: max(review_init.loc[r] for r in reviews) for mg, reviews in analyst.wip_mgs_reviews.items()
+            }
+            for mg, init in analyst_latest_mg_init.items():
+                if init > mg_latest_init.get(mg, zero_time):
+                    mg_latest_init[mg] = init
+                    mg_latest_analyst[mg] = analyst_id
+
+        self.mg_latest_analyst = mg_latest_analyst
+        self.mg_latest_init = mg_latest_init
 
     def add_history_customer_to_analyst(self):
         history_close_df = self.df_close.copy()
@@ -220,8 +239,12 @@ class CDDTaskAllocator:
                     task.mg_num in analyst.wip_mgs or task.mg_num in analyst.batch_mgs
                 )
         ) else 0
+        latest_wip_batch_group_history = 1 if (
+                has_wip_batch_group_history and analyst.analyst_id == self.mg_latest_analyst.get(task.mg_num, '')
+        ) else 0
         wip_batch_group_affinity_score = (
-                has_wip_batch_group_history * self.config['wip_batch_group_affinity_weight']
+                has_wip_batch_group_history * self.config['wip_batch_group_affinity_weight'] +
+                latest_wip_batch_group_history * self.config['latest_wip_batch_group_weight']
         )
         reasons['wip_batch_group_affinity'] = wip_batch_group_affinity_score
 
@@ -241,7 +264,6 @@ class CDDTaskAllocator:
             reasons['mg_affinity'] *= 10
             reasons['rm_affinity'] *= 10
             reasons['segment_affinity'] *= 10
-            reasons['wip_batch_group_affinity'] *= 10
         reasons['capacity'] = capacity_score
 
         score = sum(v for k, v in reasons.items())

@@ -16,13 +16,14 @@
     "rm_affinity_weight": 50.0,
     "segment_affinity_weight": 100.0,
     "wip_batch_group_affinity_weight": 3000.0,
+    "latest_wip_batch_group_weight": 1000.0,
     "capacity_weight": 5.0,
     "overload_penalty": 5.0,
     "simulate_decay": true
   },
   "files": {
     "business_output": {
-      "path": "CM Assignment 23Sep2026-BOW PR.xlsm",
+      "path": "CM Assignment 27Oct2026-BOW PR.xlsm",
       "sheet_name": "CMAssignmentFullList",
       "header": 0,
       "orientation": "auto"
@@ -45,13 +46,13 @@
       }
     ],
     "horis_mg": {
-      "path": "horis_mg_202606.xlsx",
+      "path": "horis_mg_202609.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     },
     "bb_rm_imis_group": {
-      "path": "BBRM_IMIS_GROUP_20260814.xlsx",
-      "sheet_name": "Customer_IMIS_GROUP_20260814",
+      "path": "BBRM_IMIS_GROUP_20261016.xlsx",
+      "sheet_name": "CUST_IMIS_GROUP_20261016",
       "header": 0
     }
   },
@@ -82,7 +83,7 @@
     },
     "horis_mg": {
       "cin": "CIN",
-      "mg_id": "Master_Group_ID",
+      "mg_id": "Mastergroup Code",
       "mg_name": "Master_Group_Name"
     },
     "bb_rm_imis_group": {
