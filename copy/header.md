@@ -9,6 +9,7 @@ class AnalystHeader:
     history_customers = "Served Clients"  # 历史客户 (假设是逗号分隔的字符串或列表)
     daily_productivity = "Last 3 month Productivity"  # 每周处理速度
     team_head = 'Team Head'
+    fte = "Productive FTE"  # 人力 FTE，用于 minor case 按 Team FTE 比例分配
     analyst_name = 'Analyst_Name'
 
 
@@ -23,6 +24,8 @@ class TaskHeader:
     ppm_cdd_source = "PPM CDD Source"
     CNAndLE = "CN & LE"
     risk_rating = "Risk Pyramid Risk Rating"
+    customer_type = "Customer Type"
+    is_minor = "Is Minor"  # 是否 minor customer type，需要按 Team FTE 比例分配
 
 
 class ClosedReviewHeader:

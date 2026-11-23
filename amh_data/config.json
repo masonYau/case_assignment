@@ -10,6 +10,7 @@
   "closed_completed_only": true,
   "use_imis_as_group_for_bbrm": true,
   "exclude_mg_ids": [1514726659, 1514726667],
+  "minor_customer_types": ["15", "16", "19", "24", "26"],
   "algorithm_config": {
     "cus_affinity_weight": 100.0,
     "mg_affinity_weight": 80.0,
@@ -19,6 +20,7 @@
     "latest_wip_batch_group_weight": 1000.0,
     "capacity_weight": 5.0,
     "overload_penalty": 5.0,
+    "team_fte_weight": 2000.0,
     "simulate_decay": true
   },
   "files": {
@@ -71,7 +73,8 @@
       "mg_name": "Master Group",
       "imis_id": "IMIS Group No",
       "imis_name": "IMIS Group",
-      "imis_mapping_key": "Customer_CIN_S1"
+      "imis_mapping_key": "Customer_CIN_S1",
+      "customer_type": "Customer Type"
     },
     "cm_list": {
       "cm_id": "Staff ID",
@@ -79,7 +82,8 @@
       "team": "TL Name",
       "current_wip": "Current WIP",
       "optimal_wip": "Optimal WIP",
-      "productivity": "Target Productivity"
+      "productivity": "Target Productivity",
+      "fte": "Productive FTE"
     },
     "horis_mg": {
       "cin": "CIN",

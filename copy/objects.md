@@ -18,6 +18,8 @@ class Analyst:
         self.weekly_throughput = float(row.get(ah.daily_productivity, 1.0)) * 5
         self.team_head = row.get(ah.team_head, '')
         self.analyst_name = row.get(ah.analyst_name, '')
+        fte = pd.to_numeric(row.get(ah.fte, 1.0), errors="coerce")
+        self.fte = 1.0 if pd.isna(fte) else float(fte)
 
         self.history_customers = set()
         self.history_rms = set()
@@ -50,6 +52,10 @@ class CDDTask:
         self.mg_num = ""
         self.segment = ""
         self.history_cm = set()
+        customer_type = row.get(th.customer_type, "")
+        self.customer_type = "" if pd.isna(customer_type) else str(customer_type)
+        is_minor = row.get(th.is_minor, False)
+        self.is_minor = False if pd.isna(is_minor) else bool(is_minor)
 
         # 处理日期格式
         raw_date = row.get(th.due_date)

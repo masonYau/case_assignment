@@ -51,8 +51,11 @@ class CDDTaskAllocator:
             'rm_affinity_weight': 50.0,
             'segment_affinity_weight': 100.0,
             'wip_batch_group_affinity_weight': 300.0,
+            'latest_wip_batch_group_weight': 100.0,
             'capacity_weight': 5.0,
             'overload_penalty': 5.0,
+            # minor case 按 Team FTE 比例分配的加分；0 表示关闭（HASE 等默认不受影响）
+            'team_fte_weight': 0.0,
             'simulate_decay': True
         }
 
@@ -68,6 +71,11 @@ class CDDTaskAllocator:
         self.out_dir = None
         self.analyst_out_dir = None
         self.cm_statistics = dict()
+        self.mg_latest_analyst = {}
+        self.mg_latest_init = {}
+        self.team_minor_quota = {}
+        self.team_minor_assigned = {}
+        self.team_fte = {}
 
     def read_data(self):
         self.analysts = {str(row[ah.analyst_id]): Analyst(row) for _, row in self.df_analysts.iterrows()}
@@ -76,6 +84,53 @@ class CDDTaskAllocator:
             task = CDDTask(row)
             task.mg_num = self._clean_group(row.get(mh.MasterGroupCode, ""))
             self.tasks[task.task_id] = task
+        self.init_team_minor_quota()
+
+    def init_team_minor_quota(self):
+        """按 Team FTE 比例计算每个 Team 应分到的 minor case 数（最大余数法，保证配额合计 = minor case 数）"""
+        team_fte = defaultdict(float)
+        for analyst in self.analysts.values():
+            team = str(analyst.team_head or "").strip()
+            if team and analyst.fte > 0:
+                team_fte[team] += analyst.fte
+        self.team_fte = dict(team_fte)
+        minor_count = sum(1 for task in self.tasks.values() if task.is_minor)
+        total_fte = sum(team_fte.values())
+        quota = {team: 0 for team in team_fte}
+        if minor_count and total_fte > 0:
+            raw = {team: minor_count * fte / total_fte for team, fte in team_fte.items()}
+            quota = {team: int(math.floor(value)) for team, value in raw.items()}
+            remain = minor_count - sum(quota.values())
+            for team in sorted(raw, key=lambda t: (raw[t] - quota[t], team_fte[t]), reverse=True)[:remain]:
+                quota[team] += 1
+        self.team_minor_quota = quota
+        self.team_minor_assigned = {team: 0 for team in quota}
+
+    def _team_fte_active(self, task) -> bool:
+        """minor case 是否参与 FTE 比例加分：同 group 已有 CM 在手/本批已分时不加分，保证同 group 合批"""
+        if not task.is_minor or not self.config.get('team_fte_weight') or not self.team_minor_quota:
+            return False
+        if task.mg_num != "" and any(
+                task.mg_num in analyst.wip_mgs or task.mg_num in analyst.batch_mgs
+                for analyst in self.analysts.values()):
+            return False
+        return True
+
+    def _record_team_minor_assignment(self, analyst, task):
+        if not task.is_minor:
+            return
+        team = str(analyst.team_head or "").strip()
+        if team in self.team_minor_assigned:
+            self.team_minor_assigned[team] += 1
+
+    def team_minor_summary(self) -> pd.DataFrame:
+        rows = [{
+            "Team": team,
+            "Team FTE": self.team_fte.get(team, 0.0),
+            "Minor Quota": quota,
+            "Minor Assigned": self.team_minor_assigned.get(team, 0),
+        } for team, quota in self.team_minor_quota.items()]
+        return pd.DataFrame(rows, columns=["Team", "Team FTE", "Minor Quota", "Minor Assigned"])
 
     @staticmethod
     def _clean_code(value):
@@ -119,6 +174,7 @@ class CDDTaskAllocator:
         open_df[oh.StaffID] = open_df[oh.StaffID].apply(self._clean_staff)
         open_df[mh.MasterGroupCode] = open_df[mh.MasterGroupCode].apply(self._clean_group)
         open_df = open_df[open_df[oh.StaffID] != ""]
+        open_df = open_df.sort_values(by=oh.InitiatedDate)
 
         for analyst, sub_df in open_df.groupby(oh.StaffID):
             if analyst in self.analysts:
@@ -135,6 +191,21 @@ class CDDTaskAllocator:
                     if mh.IMISId in row.index and row[mh.IMISId] not in {'', '-'}:
                         self.analysts[analyst].wip_mgs_reviews[row[mh.IMISId]].append(row[oh.ReviewID])
 
+        review_init = open_df.set_index(oh.ReviewID)[oh.InitiatedDate]
+        mg_latest_analyst = {}
+        mg_latest_init = {}
+        zero_time = pd.to_datetime('1900-01-01')
+        for analyst_id, analyst in self.analysts.items():
+            analyst_latest_mg_init = {
+                mg: max(review_init.loc[r] for r in reviews) for mg, reviews in analyst.wip_mgs_reviews.items()
+            }
+            for mg, init in analyst_latest_mg_init.items():
+                if init > mg_latest_init.get(mg, zero_time):
+                    mg_latest_init[mg] = init
+                    mg_latest_analyst[mg] = analyst_id
+
+        self.mg_latest_analyst = mg_latest_analyst
+        self.mg_latest_init = mg_latest_init
 
     def add_history_customer_to_analyst(self):
         history_close_df = self.df_close.copy()
@@ -200,7 +271,7 @@ class CDDTaskAllocator:
         self.add_wip_group_to_analyst()
         self.add_wip_segment_to_analyst()
 
-    def _calculate_score(self, analyst, task):
+    def _calculate_score(self, analyst, task, team_fte_active=False):
         """计算匹配分数"""
         reasons = {}
 
@@ -223,8 +294,12 @@ class CDDTaskAllocator:
                     task.mg_num in analyst.wip_mgs or task.mg_num in analyst.batch_mgs
                 )
         ) else 0
+        latest_wip_batch_group_history = 1 if (
+                has_wip_batch_group_history and analyst.analyst_id == self.mg_latest_analyst.get(task.mg_num, '')
+        ) else 0
         wip_batch_group_affinity_score = (
-                has_wip_batch_group_history * self.config['wip_batch_group_affinity_weight']
+                has_wip_batch_group_history * self.config['wip_batch_group_affinity_weight'] +
+                latest_wip_batch_group_history * self.config['latest_wip_batch_group_weight']
         )
         reasons['wip_batch_group_affinity'] = wip_batch_group_affinity_score
 
@@ -244,8 +319,14 @@ class CDDTaskAllocator:
             reasons['mg_affinity'] *= 10
             reasons['rm_affinity'] *= 10
             reasons['segment_affinity'] *= 10
-            reasons['wip_batch_group_affinity'] *= 10
         reasons['capacity'] = capacity_score
+
+        # 3. minor case Team FTE 比例分：所在 Team 未达到配额时加分
+        team = str(analyst.team_head or "").strip()
+        reasons['team_fte'] = self.config.get('team_fte_weight', 0.0) if (
+                team_fte_active and
+                self.team_minor_assigned.get(team, 0) < self.team_minor_quota.get(team, 0)
+        ) else 0.0
 
         score = sum(v for k, v in reasons.items())
         return score, reasons
@@ -291,11 +372,12 @@ class CDDTaskAllocator:
             best_reasons = {}
             task_reasons = {}
             has_same_cm = False
+            team_fte_active = self._team_fte_active(task)
             for analyst_id, analyst in self.analysts.items():
 
                 if analyst_id in self.selected_analyst.get(task.task_id, []):
                     continue
-                score, reasons = self._calculate_score(analyst, task)
+                score, reasons = self._calculate_score(analyst, task, team_fte_active)
                 task_reasons[analyst_id] = reasons
                 if reasons['customer_affinity'] > 1e-4:
                     has_same_cm = True
@@ -324,12 +406,14 @@ class CDDTaskAllocator:
                     "Score WIP/Batch Group Affinity": best_reasons.get('wip_batch_group_affinity'),
                     "Score RM Affinity": best_reasons.get('rm_affinity'),
                     "Score Capacity": best_reasons.get('capacity'),
+                    "Score Team FTE": best_reasons.get('team_fte'),
                     "Analyst WIP After": best_analyst.current_wip + task.effort
                 })
                 # 更新状态
                 best_analyst.current_wip += task.effort
                 self.selected_analyst[task.task_id].append(best_analyst.analyst_id)
                 self._record_batch_group_assignment(best_analyst, task)
+                self._record_team_minor_assignment(best_analyst, task)
                 # best_analyst.history_customers.add(task.customer_id)
                 if task.rm_num != "":
                     best_analyst.history_rms.add(task.rm_num)
@@ -359,11 +443,12 @@ class CDDTaskAllocator:
             analyst_reason = {}
             analyst_score = {}
             has_same_cm = False
+            team_fte_active = self._team_fte_active(task)
 
             for analyst_id, analyst in self.analysts.items():
                 if analyst_id in self.selected_analyst.get(task.task_id, []):
                     continue
-                score, reasons = self._calculate_score(analyst, task)
+                score, reasons = self._calculate_score(analyst, task, team_fte_active)
                 if reasons['customer_affinity'] > 1e-4:
                     has_same_cm = True
                 analyst_reason[analyst_id] = reasons
@@ -378,7 +463,10 @@ class CDDTaskAllocator:
                 "Init Date": task.init_date,
                 "Due Date": task.due_date,
                 "Segment": task.segment,
-                "Has Same CM": has_same_cm
+                "Has Same CM": has_same_cm,
+                "Customer Type": task.customer_type,
+                "Is Minor": task.is_minor,
+                "Team FTE Bonus Active": team_fte_active,
             }
             for i, analyst_id in enumerate(selected_analyst):
 
@@ -436,6 +524,7 @@ class CDDTaskAllocator:
                         f"Score Segment Affinity {i + 1}": analyst_reason[analyst_id].get('segment_affinity'),
                         f"Segment History Review {i + 1}": latest_segment_review,
                         f"Score Capacity {i+1}": analyst_reason[analyst_id].get('capacity'),
+                        f"Score Team FTE {i + 1}": analyst_reason[analyst_id].get('team_fte'),
                         f"Analyst WIP After {i+1}": self.analysts[analyst_id].current_wip + task.effort
                     }
                 )
@@ -444,6 +533,7 @@ class CDDTaskAllocator:
                     best_analyst.current_wip += task.effort
                     self.selected_analyst[task.task_id].append(best_analyst.analyst_id)
                     self._record_batch_group_assignment(best_analyst, task)
+                    self._record_team_minor_assignment(best_analyst, task)
                     # best_analyst.history_customers.add(task.customer_id)
                     # if task.rm_num != "":
                     #     best_analyst.history_rms.add(task.rm_num)
@@ -458,6 +548,7 @@ class CDDTaskAllocator:
     def init_for_rerun(self):
         for analyst in self.analysts.values():
             analyst.reset_wip()
+        self.team_minor_assigned = {team: 0 for team in self.team_minor_quota}
 
     def run_multiple_times(self, run_times=3):
         res_dict = dict()

@@ -242,6 +242,7 @@ class HaseAssignment:
         case_df = pd.DataFrame(index=df.index)
         case_df["case_row_id"] = range(1, len(df) + 1)
         case_df["case_id"] = values("case_id").apply(clean_code)
+        case_df = case_df[~case_df["case_id"].eq('') & ~case_df["case_id"].isna()]
         # Match AMH/TaskClean join keys while keeping the display CIN's leading zeros.
         case_df["customer_id"] = values("customer").apply(lambda value: clean_code(value, strip_zero=True))
         case_df["cin"] = (values("cin") if column("cin") in df.columns else values("customer")).apply(clean_code)
@@ -297,7 +298,7 @@ class HaseAssignment:
         cm_df["cm_id"] = values("cm_id").apply(clean_code)
         cm_df["cm_name"] = values("cm_name").apply(clean_code)
         cm_df["team"] = values("team").apply(clean_code)
-        cm_df["fte"] = values("fte").astype(float).fillna((1.0))
+        cm_df["fte"] = values("fte").replace("", "0").astype(float)
         cm_df["supported_team_codes"] = values("supported_team_codes").apply(team_codes)
         cm_df["supported_team_codes_norm"] = cm_df["supported_team_codes"].apply(
             lambda codes: list(dict.fromkeys(norm_text(code) for code in codes))

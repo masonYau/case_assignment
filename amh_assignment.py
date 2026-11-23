@@ -41,6 +41,7 @@ class DefaultFields:
         mg_name = "Master Group"
         imis_id = "IMIS Group No"
         imis_name = "IMIS Group"
+        customer_type = "Customer Type"
 
     class CMList:
         cm_id = "Staff ID"
@@ -49,6 +50,7 @@ class DefaultFields:
         current_wip = "Current WIP"
         optimal_wip = "Optimal WIP"
         productivity = "Last 3 month Productivity"
+        fte = "Productive FTE"
 
     class HorisMG:
         cin = "CIN"
@@ -146,6 +148,17 @@ def clean_group(value) -> str:
     return text
 
 
+def customer_type_code(value) -> str:
+    """'15 - NON-BANK FINANCIAL INSTITUTION' / '15' / 15 -> '15'；无数字前缀时返回大写文本"""
+    text = norm_text(value)
+    if text.endswith(".0"):
+        text = text[:-2]
+    match = re.match(r"^(\d+)", text)
+    if match:
+        return match.group(1).lstrip("0") or "0"
+    return text
+
+
 def norm_text(value) -> str:
     if pd.isna(value):
         return ""
@@ -234,6 +247,7 @@ class AmhAssignment:
         self.history_df = pd.DataFrame()
         self.proposed_df = pd.DataFrame()
         self.case_detail_df = pd.DataFrame()
+        self.team_minor_df = pd.DataFrame()
 
 
     def read_input(self):
@@ -281,6 +295,7 @@ class AmhAssignment:
         mg_name_col = get_col(fields, "mg_name", DefaultFields.CaseList.mg_name)
         imis_id_col = get_col(fields, "imis_id", DefaultFields.CaseList.imis_id)
         imis_name_col = get_col(fields, "imis_name", DefaultFields.CaseList.imis_name)
+        customer_type_col = get_col(fields, "customer_type", DefaultFields.CaseList.customer_type)
 
         self.check_columns(
             df,
@@ -302,6 +317,17 @@ class AmhAssignment:
         case_df["business_mg_name"] = df[mg_name_col].fillna("").astype(str) if mg_name_col in df.columns else ""
         case_df["business_imis_id"] = df[imis_id_col].apply(clean_group) if imis_id_col in df.columns else ""
         case_df["business_imis_name"] = df[imis_name_col].fillna("").astype(str) if imis_name_col in df.columns else ""
+
+        minor_types = {customer_type_code(v) for v in as_list(self.config.get("minor_customer_types", []))}
+        minor_types.discard("")
+        if customer_type_col in df.columns:
+            case_df["customer_type"] = df[customer_type_col].fillna("").astype(str)
+        else:
+            case_df["customer_type"] = ""
+            if minor_types:
+                self.warnings.append(
+                    f"Customer type column not found: {customer_type_col}. No case is treated as minor.")
+        case_df["is_minor"] = case_df["customer_type"].apply(customer_type_code).isin(minor_types)
 
         if due_date_col in df.columns:
             case_df["due_date"] = pd.to_datetime(df[due_date_col], errors="coerce", format="mixed")
@@ -334,6 +360,7 @@ class AmhAssignment:
         current_wip_col = get_col(fields, "current_wip", DefaultFields.CMList.current_wip)
         optimal_wip_col = get_col(fields, "optimal_wip", DefaultFields.CMList.optimal_wip)
         productivity_col = get_col(fields, "productivity", DefaultFields.CMList.productivity)
+        fte_col = get_col(fields, "fte", DefaultFields.CMList.fte)
 
         self.check_columns(df, [cm_id_col, current_wip_col, optimal_wip_col], "cm_list")
 
@@ -347,6 +374,10 @@ class AmhAssignment:
             cm_df["productivity"] = pd.to_numeric(df[productivity_col], errors="coerce").fillna(1)
         else:
             cm_df["productivity"] = 1
+        if fte_col in df.columns:
+            cm_df["fte"] = pd.to_numeric(df[fte_col], errors="coerce").fillna(1)
+        else:
+            cm_df["fte"] = 1.0
 
         cm_df = cm_df[cm_df["cm_id"] != ""].drop_duplicates("cm_id", keep="last")
         self.cm_df = cm_df
@@ -598,9 +629,14 @@ class AmhAssignment:
         res_df = self.add_algorithm_output_group_fields(res_df)
         res_df['Due Date'] = res_df['Customer'].map(ori_anniversary)
         res_df['Init Date'] = res_df['Due Date'] - pd.Timedelta(days=120)
+        self.team_minor_df = allocator.team_minor_summary()
+        if not self.team_minor_df.empty and self.team_minor_df["Minor Quota"].sum() > 0:
+            logging.info("Minor case team FTE quota vs assigned:\n%s", self.team_minor_df.to_string(index=False))
 
         if output_result:
-            res_df.to_excel(f"AMH ETB Assign Result {self.as_of_date.date()}.xlsx", index=False)
+            with pd.ExcelWriter(f"AMH ETB Assign Result {self.as_of_date.date()}.xlsx") as writer:
+                res_df.to_excel(writer, sheet_name="Sheet1", index=False)
+                self.team_minor_df.to_excel(writer, sheet_name="Minor Team FTE", index=False)
             self.export_assignment_workbook(res_df)
 
         if res_df.empty:
@@ -755,7 +791,8 @@ class AmhAssignment:
             ah.target_wip: self.cm_df["optimal_wip"],
             ah.daily_productivity: self.cm_df["productivity"],
             ah.team_head: self.cm_df['team'],
-            ah.analyst_name: self.cm_df['cm_name']
+            ah.analyst_name: self.cm_df['cm_name'],
+            ah.fte: self.cm_df['fte'],
         })
 
     def build_algorithm_task_df(self) -> pd.DataFrame:
@@ -773,6 +810,8 @@ class AmhAssignment:
             th.legal_entity: legal_entity,
             th.ppm_cdd_source: "",
             th.risk_rating: "",
+            th.customer_type: self.case_df["customer_type"],
+            th.is_minor: self.case_df["is_minor"],
             mh.MasterGroupCode: self.case_df["group_id"],
         })
 
