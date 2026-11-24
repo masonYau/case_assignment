@@ -33,3 +33,7 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+
+# Tests (kept local only)
+tests/
+copy/tests/
