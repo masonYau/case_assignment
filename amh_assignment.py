@@ -651,7 +651,7 @@ class AmhAssignment:
         })
 
     def export_assignment_workbook(self, results: pd.DataFrame) -> Path:
-        """Copy the input workbook, changing only the first-choice CM/TH cells and the MG ID/Name cells."""
+        """Copy the input workbook, changing only the first-choice CM/TH cells and the group (MG/IMIS) ID/Name cells."""
         file_config = self.config["files"]["business_output"]
         if isinstance(file_config, str):
             file_config = {"path": file_config}
@@ -791,23 +791,42 @@ class AmhAssignment:
         return output
 
     def mg_values_by_customer(self, results: pd.DataFrame) -> dict:
-        """Map customer -> [MG ID, MG Name] for every case, as matched in prepare_case_list."""
+        """Map customer -> [group ID, group name] using the Combine Group logic (add_group_key):
+        MG by default, IMIS Group for BBRM cases when use_imis_as_group_for_bbrm is on."""
         source = getattr(self, "case_df", None)
-        if source is not None and {"customer_id", "mg_id", "mg_name"}.issubset(source.columns):
-            pairs = zip(source["customer_id"], source["mg_id"], source["mg_name"])
-        elif {"Master Group ID", "Master Group"}.issubset(results.columns):
-            pairs = zip(results["Task ID"], results["Master Group ID"], results["Master Group"])
+        if source is not None and {"customer_id", "group_type", "mg_id", "mg_name",
+                                   "imis_id", "imis_name"}.issubset(source.columns):
+            rows = source.to_dict("records")
+            customer_key = "customer_id"
+        elif {"Combine Group", "Master Group ID", "Master Group",
+              "IMIS Group No", "IMIS Group"}.issubset(results.columns):
+            rows = results.to_dict("records")
+            customer_key = "Task ID"
         else:
             return {}
         mg_by_customer = {}
-        for customer, mg_id, mg_name in pairs:
-            customer = clean_customer(customer)
-            mg_id = clean_group(mg_id)
-            mg_name = "" if pd.isna(mg_name) else str(mg_name).strip()
-            if customer and (mg_id or mg_name) and customer not in mg_by_customer:
-                # Write numeric MG IDs as numbers so Excel does not flag them as text.
-                value = int(mg_id) if mg_id.isdigit() and len(mg_id) <= 15 else mg_id
-                mg_by_customer[customer] = [value, mg_name]
+        for row in rows:
+            customer = clean_customer(row[customer_key])
+            if not customer or customer in mg_by_customer:
+                continue
+            if customer_key == "customer_id":
+                group_type = row["group_type"]
+            else:
+                combine = clean_group(row["Combine Group"])
+                group_type = ("MG" if combine and combine == clean_group(row["Master Group ID"]) else
+                              "IMIS" if combine and combine == clean_group(row["IMIS Group No"]) else "")
+            if group_type == "MG":
+                group_id, group_name = row.get("mg_id", row.get("Master Group ID")), row.get("mg_name", row.get("Master Group"))
+            elif group_type == "IMIS":
+                group_id, group_name = row.get("imis_id", row.get("IMIS Group No")), row.get("imis_name", row.get("IMIS Group"))
+            else:
+                continue
+            group_id = clean_group(group_id)
+            group_name = "" if pd.isna(group_name) else str(group_name).strip()
+            if group_id or group_name:
+                # Write numeric group IDs as numbers so Excel does not flag them as text.
+                value = int(group_id) if group_id.isdigit() and len(group_id) <= 15 else group_id
+                mg_by_customer[customer] = [value, group_name]
         return mg_by_customer
 
     def present_mg_fields(self, mg_fields: list, found: dict) -> set:
