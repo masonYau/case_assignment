@@ -654,7 +654,7 @@ class AmhAssignment:
         })
 
     def export_assignment_workbook(self, results: pd.DataFrame) -> Path:
-        """Copy the input workbook, changing only the first-choice CM/TH cells and the group (MG/IMIS) ID/Name cells."""
+        """Copy the input workbook, changing only the first-choice CM/TH cells, the Master Group cells (MG cases) and the IMIS Group cells (IMIS cases)."""
         file_config = self.config["files"]["business_output"]
         if isinstance(file_config, str):
             file_config = {"path": file_config}
@@ -688,9 +688,11 @@ class AmhAssignment:
             if customer in by_customer and by_customer[customer] != values:
                 raise ValueError(f"Conflicting assignments for customer: {customer}")
             by_customer[customer] = values
-        mg_fields = [get_col(fields, "mg_id", DefaultFields.CaseList.mg_id),
-                     get_col(fields, "mg_name", DefaultFields.CaseList.mg_name)]
-        mg_by_customer = self.mg_values_by_customer(results)
+        group_fields = {"MG": [get_col(fields, "mg_id", DefaultFields.CaseList.mg_id),
+                               get_col(fields, "mg_name", DefaultFields.CaseList.mg_name)],
+                        "IMIS": [get_col(fields, "imis_id", DefaultFields.CaseList.imis_id),
+                                 get_col(fields, "imis_name", DefaultFields.CaseList.imis_name)]}
+        group_by_customer = self.group_values_by_customer(results)
 
         ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
         relation_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -730,27 +732,29 @@ class AmhAssignment:
                 missing = [name for name in [customer_field, *targets] if name not in rows]
                 if missing:
                     raise ValueError(f"business_output missing assignment fields: {missing}")
-                mg_present = self.present_mg_fields(mg_fields, rows)
+                group_present = self.present_group_fields(group_fields, rows)
                 for address, customer in cells.items():
                     column = re.sub(r"\d", "", address)
                     if column != "A" and int(re.sub(r"\D", "", address)) == rows[customer_field]:
                         for name, value in zip(targets, by_customer.get(clean_customer(customer), [])):
                             patches[f"{column}{rows[name]}"] = value
-                        for name, value in zip(mg_fields, mg_by_customer.get(clean_customer(customer), [])):
-                            if name in mg_present and value != "":
+                        group_type, values = group_by_customer.get(clean_customer(customer), ("", []))
+                        for name, value in zip(group_fields.get(group_type, []), values):
+                            if name in group_present and value != "":
                                 patches[f"{column}{rows[name]}"] = value
             else:
                 missing = [name for name in [customer_field, *targets] if name not in columns]
                 if missing:
                     raise ValueError(f"business_output missing assignment fields: {missing}")
-                mg_present = self.present_mg_fields(mg_fields, columns)
+                group_present = self.present_group_fields(group_fields, columns)
                 for address, customer in cells.items():
                     row = int(re.sub(r"\D", "", address))
                     if row > header_row and re.sub(r"\d", "", address) == columns[customer_field]:
                         for name, value in zip(targets, by_customer.get(clean_customer(customer), [])):
                             patches[f"{columns[name]}{row}"] = value
-                        for name, value in zip(mg_fields, mg_by_customer.get(clean_customer(customer), [])):
-                            if name in mg_present and value != "":
+                        group_type, values = group_by_customer.get(clean_customer(customer), ("", []))
+                        for name, value in zip(group_fields.get(group_type, []), values):
+                            if name in group_present and value != "":
                                 patches[f"{columns[name]}{row}"] = value
 
             prefix = re.search(r'<((?:[\w.-]+:)?)worksheet\b', xml).group(1)
@@ -793,9 +797,10 @@ class AmhAssignment:
         logging.info("Assignment case list copy written to: %s", output)
         return output
 
-    def mg_values_by_customer(self, results: pd.DataFrame) -> dict:
-        """Map customer -> [group ID, group name] using the Combine Group logic (add_group_key):
-        MG by default, IMIS Group for BBRM cases when use_imis_as_group_for_bbrm is on."""
+    def group_values_by_customer(self, results: pd.DataFrame) -> dict:
+        """Map customer -> (group_type, [group ID, group name]) using the Combine Group logic (add_group_key):
+        MG by default, IMIS Group for BBRM cases when use_imis_as_group_for_bbrm is on.
+        MG values go to the Master Group columns, IMIS values to the IMIS Group columns."""
         source = getattr(self, "case_df", None)
         if source is not None and {"customer_id", "group_type", "mg_id", "mg_name",
                                    "imis_id", "imis_name"}.issubset(source.columns):
@@ -807,10 +812,10 @@ class AmhAssignment:
             customer_key = "Task ID"
         else:
             return {}
-        mg_by_customer = {}
+        group_by_customer = {}
         for row in rows:
             customer = clean_customer(row[customer_key])
-            if not customer or customer in mg_by_customer:
+            if not customer or customer in group_by_customer:
                 continue
             if customer_key == "customer_id":
                 group_type = row["group_type"]
@@ -829,17 +834,18 @@ class AmhAssignment:
             if group_id or group_name:
                 # Write numeric group IDs as numbers so Excel does not flag them as text.
                 value = int(group_id) if group_id.isdigit() and len(group_id) <= 15 else group_id
-                mg_by_customer[customer] = [value, group_name]
-        return mg_by_customer
+                group_by_customer[customer] = (group_type, [value, group_name])
+        return group_by_customer
 
-    def present_mg_fields(self, mg_fields: list, found: dict) -> set:
-        missing = [name for name in mg_fields if name not in found]
+    def present_group_fields(self, group_fields: dict, found: dict) -> set:
+        names = [name for pair in group_fields.values() for name in pair]
+        missing = [name for name in names if name not in found]
         if missing:
-            message = f"business_output missing MG fields, skip writing them: {missing}"
+            message = f"business_output missing group fields, skip writing them: {missing}"
             logging.warning(message)
             if hasattr(self, "warnings"):
                 self.warnings.append(message)
-        return {name for name in mg_fields if name in found}
+        return {name for name in names if name in found}
 
     def add_algorithm_output_group_fields(self, res_df: pd.DataFrame) -> pd.DataFrame:
         if res_df.empty:
