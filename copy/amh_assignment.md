@@ -654,7 +654,7 @@ class AmhAssignment:
         })
 
     def export_assignment_workbook(self, results: pd.DataFrame) -> Path:
-        """Copy the input workbook, changing only the first-choice CM/TH cells."""
+        """Copy the input workbook, changing only the first-choice CM/TH cells and the MG ID/Name cells."""
         file_config = self.config["files"]["business_output"]
         if isinstance(file_config, str):
             file_config = {"path": file_config}
@@ -688,6 +688,9 @@ class AmhAssignment:
             if customer in by_customer and by_customer[customer] != values:
                 raise ValueError(f"Conflicting assignments for customer: {customer}")
             by_customer[customer] = values
+        mg_fields = [get_col(fields, "mg_id", DefaultFields.CaseList.mg_id),
+                     get_col(fields, "mg_name", DefaultFields.CaseList.mg_name)]
+        mg_by_customer = self.mg_values_by_customer(results)
 
         ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
         relation_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -727,20 +730,28 @@ class AmhAssignment:
                 missing = [name for name in [customer_field, *targets] if name not in rows]
                 if missing:
                     raise ValueError(f"business_output missing assignment fields: {missing}")
+                mg_present = self.present_mg_fields(mg_fields, rows)
                 for address, customer in cells.items():
                     column = re.sub(r"\d", "", address)
                     if column != "A" and int(re.sub(r"\D", "", address)) == rows[customer_field]:
                         for name, value in zip(targets, by_customer.get(clean_customer(customer), [])):
                             patches[f"{column}{rows[name]}"] = value
+                        for name, value in zip(mg_fields, mg_by_customer.get(clean_customer(customer), [])):
+                            if name in mg_present and value != "":
+                                patches[f"{column}{rows[name]}"] = value
             else:
                 missing = [name for name in [customer_field, *targets] if name not in columns]
                 if missing:
                     raise ValueError(f"business_output missing assignment fields: {missing}")
+                mg_present = self.present_mg_fields(mg_fields, columns)
                 for address, customer in cells.items():
                     row = int(re.sub(r"\D", "", address))
                     if row > header_row and re.sub(r"\d", "", address) == columns[customer_field]:
                         for name, value in zip(targets, by_customer.get(clean_customer(customer), [])):
                             patches[f"{columns[name]}{row}"] = value
+                        for name, value in zip(mg_fields, mg_by_customer.get(clean_customer(customer), [])):
+                            if name in mg_present and value != "":
+                                patches[f"{columns[name]}{row}"] = value
 
             prefix = re.search(r'<((?:[\w.-]+:)?)worksheet\b', xml).group(1)
             tag = re.escape(prefix)
@@ -755,8 +766,11 @@ class AmhAssignment:
                     old = re.search(rf'<{tag}c\b[^>]*\br="{address}"[^>]*?(?:/>|>.*?</{tag}c>)', row_xml, re.DOTALL)
                     attributes = re.match(rf'<{tag}c\b([^>]*?)(?:/?>)', old.group(0)).group(1) if old else f' r="{address}"'
                     attributes = re.sub(r'\s+t="[^"]*"', '', attributes)
-                    text = "" if pd.isna(value) else str(value)
-                    new = f'<{prefix}c{attributes} t="inlineStr"><{prefix}is><{prefix}t xml:space="preserve">{escape(text)}</{prefix}t></{prefix}is></{prefix}c>'
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        new = f'<{prefix}c{attributes}><{prefix}v>{value}</{prefix}v></{prefix}c>'
+                    else:
+                        text = "" if pd.isna(value) else str(value)
+                        new = f'<{prefix}c{attributes} t="inlineStr"><{prefix}is><{prefix}t xml:space="preserve">{escape(text)}</{prefix}t></{prefix}is></{prefix}c>'
                     if old:
                         row_xml = row_xml[:old.start()] + new + row_xml[old.end():]
                     else:
@@ -778,6 +792,35 @@ class AmhAssignment:
         self.filled_output_path = output
         logging.info("Assignment case list copy written to: %s", output)
         return output
+
+    def mg_values_by_customer(self, results: pd.DataFrame) -> dict:
+        """Map customer -> [MG ID, MG Name] for every case, as matched in prepare_case_list."""
+        source = getattr(self, "case_df", None)
+        if source is not None and {"customer_id", "mg_id", "mg_name"}.issubset(source.columns):
+            pairs = zip(source["customer_id"], source["mg_id"], source["mg_name"])
+        elif {"Master Group ID", "Master Group"}.issubset(results.columns):
+            pairs = zip(results["Task ID"], results["Master Group ID"], results["Master Group"])
+        else:
+            return {}
+        mg_by_customer = {}
+        for customer, mg_id, mg_name in pairs:
+            customer = clean_customer(customer)
+            mg_id = clean_group(mg_id)
+            mg_name = "" if pd.isna(mg_name) else str(mg_name).strip()
+            if customer and (mg_id or mg_name) and customer not in mg_by_customer:
+                # Write numeric MG IDs as numbers so Excel does not flag them as text.
+                value = int(mg_id) if mg_id.isdigit() and len(mg_id) <= 15 else mg_id
+                mg_by_customer[customer] = [value, mg_name]
+        return mg_by_customer
+
+    def present_mg_fields(self, mg_fields: list, found: dict) -> set:
+        missing = [name for name in mg_fields if name not in found]
+        if missing:
+            message = f"business_output missing MG fields, skip writing them: {missing}"
+            logging.warning(message)
+            if hasattr(self, "warnings"):
+                self.warnings.append(message)
+        return {name for name in mg_fields if name in found}
 
     def add_algorithm_output_group_fields(self, res_df: pd.DataFrame) -> pd.DataFrame:
         if res_df.empty:
