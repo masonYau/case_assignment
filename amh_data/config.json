@@ -10,14 +10,14 @@
   "closed_completed_only": true,
   "use_imis_as_group_for_bbrm": true,
   "exclude_mg_ids": [1514726659, 1514726667],
-  "minor_customer_types": ["15", "16", "19", "24", "26"],
+  "minor_customer_types": ["15", "16", "18", "19", "20", "24", "26"],
   "algorithm_config": {
     "cus_affinity_weight": 100.0,
     "mg_affinity_weight": 80.0,
     "rm_affinity_weight": 50.0,
     "segment_affinity_weight": 100.0,
     "wip_batch_group_affinity_weight": 3000.0,
-    "latest_wip_batch_group_weight": 1000.0,
+    "latest_wip_batch_group_weight": 3000.0,
     "capacity_weight": 5.0,
     "overload_penalty": 5.0,
     "team_fte_weight": 2000.0,
@@ -25,13 +25,13 @@
   },
   "files": {
     "business_output": {
-      "path": "CM Assignment 27Oct2026-BOW PR.xlsm",
+      "path": "CM Assignment 20Nov2026-BOW PR.xlsm",
       "sheet_name": "CMAssignmentFullList",
       "header": 0,
       "orientation": "auto"
     },
     "cm_list": {
-      "path": "CM_List_AMH.xlsx",
+      "path": "CM_List_AMH_261124.xlsx",
       "sheet_name": "Sheet1",
       "header": 0
     },
