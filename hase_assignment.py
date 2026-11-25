@@ -505,6 +505,7 @@ class HaseAssignment:
             analyst.history_segment_reviews.clear()
         for row in self.case_df.itertuples(index=False):
             allocator.tasks[row.customer_id].segment = norm_text(row.segment)
+        self.apply_bbpm_constraint(allocator)
 
         max_due_date_gap = df_tasks[th.due_date].max() - df_tasks[th.due_date].min()
         all_history_segment = set()
@@ -545,6 +546,28 @@ class HaseAssignment:
             result.to_excel(output, index=False)
             self.export_assignment_workbook()
         return result
+
+    def apply_bbpm_constraint(self, allocator):
+        """BBPM cases (Team code '-') prefer CMs whose Mass is 'Y' via the existing segment affinity score."""
+        bbpm_codes = {norm_text(code) for code in self.config.get("bbpm_team_codes", ["-"])}
+        bbpm_tasks = [task_id for task_id, task in allocator.tasks.items() if task.segment in bbpm_codes]
+        if not bbpm_tasks:
+            return
+        mass = self.cm_df["mass"] if "mass" in self.cm_df.columns else pd.Series("", index=self.cm_df.index)
+        mass_cm_ids = set(self.cm_df.loc[mass.eq("Y"), "cm_id"])
+        if not mass_cm_ids:
+            self.warnings.append(
+                f"{len(bbpm_tasks)} BBPM cases found but no CM has Mass = Y; BBPM segment affinity skipped."
+            )
+            logging.warning(self.warnings[-1])
+            return
+        bbpm_segment = sorted(bbpm_codes)[0]
+        for cm_id in mass_cm_ids:
+            # Mass CMs count as supporting the BBPM Team code, so they get segment affinity on BBPM cases.
+            allocator.analysts[cm_id].history_segment.add(bbpm_segment)
+        for task_id in bbpm_tasks:
+            allocator.tasks[task_id].segment = bbpm_segment
+        logging.info(f"BBPM: {len(bbpm_tasks)} cases get segment affinity with {len(mass_cm_ids)} Mass CMs")
 
     def export_assignment_workbook(self) -> Path:
         """Copy the complete business workbook and patch only assignment cells."""
